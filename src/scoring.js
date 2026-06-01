@@ -354,7 +354,52 @@ function topValues(submissions, field, limit = 6) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([key, count]) => ({ key, count }));
 }
 
-function buildFlowAnalytics(submissions) {
+function distinctSessions(events, eventType, predicate = () => true) {
+  const sessions = new Set();
+  events
+    .filter(item => item.eventType === eventType && predicate(item))
+    .forEach(item => sessions.add(item.sessionId));
+  return sessions.size;
+}
+
+function buildFunnel(submissions, events) {
+  const completed = submissions.length;
+  const visitors = Math.max(distinctSessions(events, "landing_view"), completed);
+  const started = Math.max(distinctSessions(events, "start"), completed);
+  const questionViews = Array.from({ length: 20 }, (_, index) => ({
+    step: index + 1,
+    count: distinctSessions(events, "question_view", item => Number(item.step) === index + 1)
+  }));
+  const reachedLastQuestion = Math.max(questionViews[19]?.count || 0, completed);
+
+  return {
+    visitors,
+    started,
+    reachedLastQuestion,
+    completed,
+    visitToStart: pct(started, visitors),
+    startToComplete: pct(completed, started),
+    visitToComplete: pct(completed, visitors),
+    questionViews
+  };
+}
+
+function averageBlocks(submissions) {
+  const totals = {};
+  submissions.forEach(item => {
+    Object.entries(item.score?.blocks || {}).forEach(([key, value]) => {
+      totals[key] = totals[key] || { sum: 0, count: 0 };
+      totals[key].sum += Number(value) || 0;
+      totals[key].count += 1;
+    });
+  });
+  return Object.fromEntries(Object.entries(totals).map(([key, value]) => [
+    key,
+    value.count ? Math.round(value.sum / value.count) : 0
+  ]));
+}
+
+function buildFlowAnalytics(submissions, events = []) {
   const total = submissions.length;
   const statusCounts = submissions.reduce((acc, item) => {
     const code = item.recommendation?.code || "unknown";
@@ -365,6 +410,8 @@ function buildFlowAnalytics(submissions) {
   const redFlagCount = submissions.reduce((sum, item) => sum + item.flags.length, 0);
   const greenShare = pct(statusCounts.green || 0, total);
   const analyticsGap = submissions.filter(item => asArray(item.answers?.metrics).includes("noAnalytics")).length;
+  const funnel = buildFunnel(submissions, events);
+  const avgFlags = total ? Math.round((redFlagCount / total) * 10) / 10 : 0;
 
   const recommendations = [];
   if (total === 0) {
@@ -390,6 +437,10 @@ function buildFlowAnalytics(submissions) {
     greenShare,
     yellowShare: pct(statusCounts.yellow || 0, total),
     redShare: pct(statusCounts.red || 0, total),
+    orangeShare: pct(statusCounts.orange || 0, total),
+    avgFlags,
+    funnel,
+    avgBlocks: averageBlocks(submissions),
     topProjectTypes: topValues(submissions, "projectTypes"),
     topTools: topValues(submissions, "tools"),
     topMetrics: topValues(submissions, "metrics"),

@@ -8,6 +8,8 @@ const {
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
   insertSubmission,
+  insertEvent,
+  listEvents,
   listSubmissions,
   getSubmission,
   authenticate,
@@ -256,6 +258,21 @@ async function handleApi(req, res) {
     return sendJson(res, 200, { config: getQuestionnaireConfig() });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/events") {
+    const payload = await readBody(req);
+    insertEvent({
+      sessionId: payload.sessionId,
+      eventType: payload.eventType,
+      step: payload.step,
+      payload: {
+        path: url.pathname,
+        referrer: req.headers.referer || "",
+        userAgent: req.headers["user-agent"] || ""
+      }
+    });
+    return sendJson(res, 201, { ok: true });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/submissions") {
     const payload = await readBody(req);
     if (!payload.consents?.privacy || !payload.consents?.dataProcessing) {
@@ -341,7 +358,7 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/analytics") {
-    const analytics = buildFlowAnalytics(listSubmissions());
+    const analytics = buildFlowAnalytics(listSubmissions(), listEvents());
     return sendJson(res, 200, { analytics });
   }
 
@@ -357,7 +374,7 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/admin/ai-insights") {
     const submissions = listSubmissions();
-    const analytics = buildFlowAnalytics(submissions);
+    const analytics = buildFlowAnalytics(submissions, listEvents());
     const insights = await generateAiInsights(submissions, analytics);
     return sendJson(res, 200, { insights });
   }

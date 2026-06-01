@@ -74,6 +74,14 @@ async function initDb({ adminUsername, adminPassword, resetAdminPassword = false
       value_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      step INTEGER,
+      payload_json TEXT NOT NULL DEFAULT '{}'
+    );
   `);
 
   const submissionColumns = db.prepare("PRAGMA table_info(submissions)").all().map(column => column.name);
@@ -177,6 +185,31 @@ function getSubmission(id) {
   return row ? rowToSubmission(row) : null;
 }
 
+function insertEvent(record) {
+  db.prepare(`
+    INSERT INTO events (id, created_at, session_id, event_type, step, payload_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    new Date().toISOString(),
+    String(record.sessionId || "unknown").slice(0, 120),
+    String(record.eventType || "unknown").slice(0, 80),
+    Number.isInteger(record.step) ? record.step : null,
+    json(record.payload || {})
+  );
+}
+
+function listEvents() {
+  return db.prepare("SELECT * FROM events ORDER BY created_at DESC").all().map(row => ({
+    id: row.id,
+    createdAt: row.created_at,
+    sessionId: row.session_id,
+    eventType: row.event_type,
+    step: row.step,
+    payload: parseJson(row.payload_json, {})
+  }));
+}
+
 function findUserByUsername(username) {
   return db.prepare("SELECT * FROM users WHERE username = ?").get(username);
 }
@@ -228,6 +261,8 @@ module.exports = {
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
   insertSubmission,
+  insertEvent,
+  listEvents,
   listSubmissions,
   getSubmission,
   authenticate,

@@ -1,4 +1,6 @@
 const ADMIN_USER_KEY = "hr_admin_user";
+const FUNNEL_SESSION_KEY = "hr_funnel_session";
+const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
   personalDataConsent: "personal_data_consent_v2"
@@ -236,6 +238,8 @@ const state = {
   config: null,
   configText: "",
   configOpen: false,
+  adminSection: "candidates",
+  trackedSteps: new Set(),
   loading: false
 };
 
@@ -268,6 +272,35 @@ function icon(name) {
     eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'
   };
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths[name] || paths.check}</svg>`;
+}
+
+function funnelSessionId() {
+  let id = sessionStorage.getItem(FUNNEL_SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem(FUNNEL_SESSION_KEY, id);
+  }
+  return id;
+}
+
+function trackEvent(eventType, step = null) {
+  if (currentAppRoute() !== "candidate") return;
+  fetch("/api/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    keepalive: true,
+    body: JSON.stringify({
+      sessionId: funnelSessionId(),
+      eventType,
+      step
+    })
+  }).catch(() => {});
+}
+
+function trackLandingOnce() {
+  if (sessionStorage.getItem(FUNNEL_LANDING_KEY)) return;
+  sessionStorage.setItem(FUNNEL_LANDING_KEY, "1");
+  trackEvent("landing_view");
 }
 
 function iconEl(name) {
@@ -579,6 +612,11 @@ function candidateView() {
   }
   if (!state.hasStarted) return welcomeView();
   const q = questions[state.currentStep];
+  const stepNumber = state.currentStep + 1;
+  if (!state.trackedSteps.has(stepNumber)) {
+    state.trackedSteps.add(stepNumber);
+    setTimeout(() => trackEvent("question_view", stepNumber), 0);
+  }
   const isLast = state.currentStep === questions.length - 1;
   const hint = q.maxPick ? `Можно выбрать до ${q.maxPick} вариантов.` : chatHint(q);
   const guide = guideForQuestion(state.currentStep, q);
@@ -667,6 +705,7 @@ function welcomeView() {
               showToast("Нужно отметить оба согласия.");
               return;
             }
+            trackEvent("start");
             state.hasStarted = true;
             render();
           } }, ["Поехали", iconEl("arrow")])
@@ -736,6 +775,7 @@ async function submitCandidate(event) {
     return;
   }
   const result = await response.json();
+  trackEvent("completed");
   document.querySelector("#app").replaceChildren(thankYouView(result));
 }
 
@@ -828,6 +868,16 @@ function kpi(label, value, tone = "") {
   ]);
 }
 
+function adminNavButton(section, label, iconName) {
+  return el("button", {
+    class: `btn ghost ${state.adminSection === section ? "active" : ""}`,
+    onclick: () => {
+      state.adminSection = section;
+      render();
+    }
+  }, [iconEl(iconName), label]);
+}
+
 function statusBar(analytics) {
   const total = Math.max(analytics.total, 1);
   const parts = ["green", "yellow", "orange", "red"].map(code => {
@@ -873,6 +923,135 @@ function analyticsList(title, items, field) {
       el("span", {}, [optionLabel(field, item.key)]),
       el("strong", {}, [String(item.count)])
     ])) : [el("p", { class: "muted" }, ["Данных пока нет."])])
+  ]);
+}
+
+function percentage(value) {
+  return `${Number(value || 0)}%`;
+}
+
+function barRow(label, value, max, tone = "") {
+  const width = max ? Math.max(4, Math.round((value / max) * 100)) : 0;
+  return el("div", { class: "bar-row" }, [
+    el("div", { class: "bar-label" }, [
+      el("span", {}, [label]),
+      el("strong", {}, [String(value)])
+    ]),
+    el("div", { class: "bar-track" }, [
+      el("span", { class: tone, style: `width:${width}%` })
+    ])
+  ]);
+}
+
+function funnelPanel(analytics) {
+  const funnel = analytics.funnel || { visitors: 0, started: 0, reachedLastQuestion: 0, completed: 0 };
+  const max = Math.max(funnel.visitors, funnel.started, funnel.reachedLastQuestion, funnel.completed, 1);
+  return el("section", { class: "chart-panel wide" }, [
+    el("div", { class: "panel-head" }, [
+      el("h2", {}, ["Воронка прохождения"]),
+      el("span", {}, ["посещения, старт, последний вопрос, отправка"])
+    ]),
+    barRow("Зашли на анкету", funnel.visitors, max, "blue"),
+    barRow("Начали проходить", funnel.started, max, "mint"),
+    barRow("Дошли до последнего вопроса", funnel.reachedLastQuestion, max, "yellow"),
+    barRow("Отправили анкету", funnel.completed, max, "green"),
+    el("div", { class: "conversion-grid" }, [
+      kpi("Старт из входа", percentage(funnel.visitToStart)),
+      kpi("Доходимость от старта", percentage(funnel.startToComplete), "green"),
+      kpi("Конверсия вход → анкета", percentage(funnel.visitToComplete), "yellow")
+    ])
+  ]);
+}
+
+function statusChart(analytics) {
+  const total = Math.max(analytics.total || 0, 1);
+  const rows = [
+    ["Green", analytics.statusCounts?.green || 0, "green"],
+    ["Yellow", analytics.statusCounts?.yellow || 0, "yellow"],
+    ["Orange", analytics.statusCounts?.orange || 0, "orange"],
+    ["Red", analytics.statusCounts?.red || 0, "red"]
+  ];
+  return el("section", { class: "chart-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("h2", {}, ["Качество потока"]),
+      el("span", {}, [`Всего анкет: ${analytics.total || 0}`])
+    ]),
+    ...rows.map(([label, count, tone]) => barRow(label, count, total, tone)),
+    el("div", { class: "conversion-grid two" }, [
+      kpi("Средний балл", `${analytics.avgScore || 0}/100`),
+      kpi("Стоп-факторов на кандидата", analytics.avgFlags || 0, "red")
+    ])
+  ]);
+}
+
+function blockChart(analytics) {
+  const blocks = analytics.avgBlocks || {};
+  const labelsByBlock = {
+    portfolio: "Портфолио",
+    experience: "Опыт",
+    responsibilities: "Ответственность",
+    contentCase: "Мини-кейс",
+    tools: "Инструменты",
+    analytics: "Аналитика",
+    culture: "Культура"
+  };
+  const values = Object.entries(labelsByBlock).map(([key, label]) => [label, blocks[key] || 0]);
+  const max = Math.max(...values.map(item => item[1]), 1);
+  return el("section", { class: "chart-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("h2", {}, ["Средние баллы по блокам"]),
+      el("span", {}, ["показывает слабые места потока"])
+    ]),
+    ...values.map(([label, value]) => barRow(label, value, max, "blue"))
+  ]);
+}
+
+function questionDropoffChart(analytics) {
+  const views = analytics.funnel?.questionViews || [];
+  const max = Math.max(...views.map(item => item.count), 1);
+  return el("section", { class: "chart-panel wide" }, [
+    el("div", { class: "panel-head" }, [
+      el("h2", {}, ["Просмотры вопросов"]),
+      el("span", {}, ["где люди потенциально отваливаются"])
+    ]),
+    el("div", { class: "question-bars" }, views.map(item => el("div", { class: "question-bar" }, [
+      el("span", { style: `height:${max ? Math.max(8, Math.round((item.count / max) * 100)) : 0}%` }),
+      el("strong", {}, [String(item.step)]),
+      el("em", {}, [String(item.count)])
+    ])))
+  ]);
+}
+
+function analyticsDashboardView(analytics) {
+  return el("section", { class: "analytics-page" }, [
+    el("header", { class: "dash-header" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("chart"), "Аналитика воронки"]),
+        el("h1", {}, ["Визуальная аналитика"]),
+        el("p", {}, ["Здесь видно, сколько кандидатов заходит, где они доходят до конца и какого качества получается поток."])
+      ]),
+      el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "AI-выводы"])
+    ]),
+    el("div", { class: "analytics-grid" }, [
+      funnelPanel(analytics),
+      statusChart(analytics),
+      blockChart(analytics),
+      questionDropoffChart(analytics),
+      analyticsList("Типы проектов", analytics.topProjectTypes || [], "projectTypes"),
+      analyticsList("Инструменты", analytics.topTools || [], "tools"),
+      analyticsList("Метрики", analytics.topMetrics || [], "metrics"),
+      el("section", { class: "insight-panel chart-panel" }, [
+        el("h2", {}, ["Выводы"]),
+        ...(analytics.recommendations || []).map(text => el("p", {}, [text])),
+        state.aiInsights ? el("div", { class: "ai-box" }, [
+          el("span", { class: "mode" }, [state.aiInsights.mode === "yandex" ? "YandexGPT" : state.aiInsights.mode === "ai" ? "OpenAI" : "Локальная аналитика"]),
+          el("strong", {}, [state.aiInsights.summary || ""]),
+          ...(state.aiInsights.recommendations || []).map(text => el("p", {}, [text])),
+          ...(state.aiInsights.interviewFocus || []).map(text => el("p", {}, [`Интервью: ${text}`])),
+          ...(state.aiInsights.risks || []).map(text => el("p", { class: "risk-text" }, [text]))
+        ]) : el("p", { class: "muted" }, ["Нажмите AI-выводы, чтобы получить интерпретацию потока через YandexGPT."])
+      ])
+    ])
   ]);
 }
 
@@ -933,6 +1112,8 @@ function adminView() {
     el("nav", { class: "topbar" }, [
       el("a", { class: "brand", href: "#candidate" }, [iconEl("chart"), "HR Screening"]),
       el("div", { class: "top-actions" }, [
+        adminNavButton("candidates", "Кандидаты", "list"),
+        adminNavButton("analytics", "Аналитика", "chart"),
         el("button", { class: "btn ghost", onclick: async () => { await loadAdmin(); render(); } }, ["Обновить"]),
         el("button", { class: "btn ghost", onclick: () => { state.configOpen = !state.configOpen; render(); } }, ["Методология"]),
         el("button", { class: "btn danger", onclick: async () => {
@@ -945,7 +1126,7 @@ function adminView() {
       ])
     ]),
     state.configOpen ? configPanel() : el("div"),
-    el("section", { class: "dashboard-grid" }, [
+    state.adminSection === "analytics" ? analyticsDashboardView(analytics) : el("section", { class: "dashboard-grid" }, [
       el("div", { class: "dashboard-main" }, [
         el("header", { class: "dash-header" }, [
           el("div", {}, [
@@ -972,11 +1153,11 @@ function adminView() {
           el("h2", {}, ["Рекомендации"]),
           ...(analytics.recommendations || []).map(text => el("p", {}, [text])),
           state.aiInsights ? el("div", { class: "ai-box" }, [
-            el("span", { class: "mode" }, [state.aiInsights.mode === "ai" ? "OpenAI" : "Локальная аналитика"]),
+            el("span", { class: "mode" }, [state.aiInsights.mode === "yandex" ? "YandexGPT" : state.aiInsights.mode === "ai" ? "OpenAI" : "Локальная аналитика"]),
             el("strong", {}, [state.aiInsights.summary || ""]),
             ...(state.aiInsights.recommendations || []).map(text => el("p", {}, [text])),
             ...(state.aiInsights.risks || []).map(text => el("p", { class: "risk-text" }, [text]))
-          ]) : el("p", { class: "muted" }, ["AI-блок подключается через OPENAI_API_KEY. Без ключа работает локальная аналитика."])
+          ]) : el("p", { class: "muted" }, ["AI-блок подключен через YandexGPT. Нажмите AI-анализ потока, чтобы получить выводы."])
         ]),
         analyticsList("Типы проектов", analytics.topProjectTypes || [], "projectTypes"),
         analyticsList("Инструменты", analytics.topTools || [], "tools"),
@@ -1277,6 +1458,9 @@ function consentSections() {
 function render() {
   const app = document.querySelector("#app");
   const route = currentAppRoute();
+  if (route === "candidate" && !state.hasStarted) {
+    setTimeout(trackLandingOnce, 0);
+  }
   const view = route === "admin"
     ? adminView()
     : route === "privacy" || route === "personal-data-consent"
