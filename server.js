@@ -8,6 +8,7 @@ const {
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
   insertSubmission,
+  updateTestAssignment,
   insertEvent,
   listEvents,
   listSubmissions,
@@ -125,8 +126,23 @@ function publicCandidate(item) {
     flags: item.flags,
     strengths: item.strengths,
     risks: item.risks,
-    hrNote: item.hrNote
+    hrNote: item.hrNote,
+    testAssignment: item.testAssignment
   };
+}
+
+function testAssignmentConfig(config) {
+  return {
+    threshold: 80,
+    enabledStatuses: ["green"],
+    ...(config.testAssignment || {})
+  };
+}
+
+function isTestAssignmentEligible(record, config) {
+  const testConfig = testAssignmentConfig(config);
+  return record.score.total >= Number(testConfig.threshold || 80) &&
+    (testConfig.enabledStatuses || ["green"]).includes(record.recommendation.code);
 }
 
 async function generateAiInsights(submissions, analytics) {
@@ -310,14 +326,48 @@ async function handleApi(req, res) {
       flags: scored.flags,
       strengths: scored.strengths,
       risks: scored.risks,
-      hrNote: scored.hrNote
+      hrNote: scored.hrNote,
+      testAssignment: {
+        eligible: false,
+        status: "not_assigned"
+      }
+    };
+    const eligible = isTestAssignmentEligible(record, config);
+    record.testAssignment = {
+      eligible,
+      status: eligible ? "assigned" : "not_assigned",
+      threshold: testAssignmentConfig(config).threshold,
+      assignedAt: eligible ? consentTimestamp : null
     };
     insertSubmission(record);
     return sendJson(res, 201, {
       id: record.id,
       score: record.score,
-      recommendation: record.recommendation
+      recommendation: record.recommendation,
+      nextStep: {
+        testAssignmentEligible: eligible,
+        testAssignmentUrl: eligible ? `/#test/${record.id}` : null
+      }
     });
+  }
+
+  if (req.method === "POST" && url.pathname.match(/^\/api\/submissions\/[^/]+\/test-assignment$/)) {
+    const id = url.pathname.split("/")[3];
+    const payload = await readBody(req);
+    const testLink = String(payload.testLink || "").trim();
+    if (!/^https:\/\/(docs\.google\.com|drive\.google\.com)\//i.test(testLink)) {
+      return sendJson(res, 400, { error: "Укажите ссылку на Google Документ или Google Drive." });
+    }
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Submission not found" });
+    if (!record.testAssignment?.eligible) return sendJson(res, 403, { error: "Test assignment is not available for this submission" });
+    const updated = updateTestAssignment(id, {
+      ...record.testAssignment,
+      status: "submitted",
+      link: testLink,
+      submittedAt: new Date().toISOString()
+    });
+    return sendJson(res, 200, { ok: true, testAssignment: updated.testAssignment });
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/login") {

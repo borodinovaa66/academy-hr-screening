@@ -51,7 +51,8 @@ async function initDb({ adminUsername, adminPassword, resetAdminPassword = false
       strengths_json TEXT NOT NULL,
       risks_json TEXT NOT NULL,
       hr_note TEXT NOT NULL,
-      consents_json TEXT NOT NULL DEFAULT '{}'
+      consents_json TEXT NOT NULL DEFAULT '{}',
+      test_assignment_json TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -87,6 +88,9 @@ async function initDb({ adminUsername, adminPassword, resetAdminPassword = false
   const submissionColumns = db.prepare("PRAGMA table_info(submissions)").all().map(column => column.name);
   if (!submissionColumns.includes("consents_json")) {
     db.exec("ALTER TABLE submissions ADD COLUMN consents_json TEXT NOT NULL DEFAULT '{}';");
+  }
+  if (!submissionColumns.includes("test_assignment_json")) {
+    db.exec("ALTER TABLE submissions ADD COLUMN test_assignment_json TEXT NOT NULL DEFAULT '{}';");
   }
 
   const userCount = db.prepare("SELECT COUNT(*) AS count FROM users").get().count;
@@ -143,8 +147,8 @@ function insertSubmission(record) {
   db.prepare(`
     INSERT INTO submissions (
       id, submitted_at, candidate_json, answers_json, score_json, recommendation_json,
-      flags_json, strengths_json, risks_json, hr_note, consents_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      flags_json, strengths_json, risks_json, hr_note, consents_json, test_assignment_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.submittedAt,
@@ -156,7 +160,8 @@ function insertSubmission(record) {
     json(record.strengths),
     json(record.risks),
     record.hrNote,
-    json(record.consents || {})
+    json(record.consents || {}),
+    json(record.testAssignment || {})
   );
 }
 
@@ -172,8 +177,21 @@ function rowToSubmission(row) {
     strengths: parseJson(row.strengths_json, []),
     risks: parseJson(row.risks_json, []),
     hrNote: row.hr_note,
-    consents: parseJson(row.consents_json, {})
+    consents: parseJson(row.consents_json, {}),
+    testAssignment: parseJson(row.test_assignment_json, {})
   };
+}
+
+function updateTestAssignment(id, patch) {
+  const current = getSubmission(id);
+  if (!current) return null;
+  const next = {
+    ...(current.testAssignment || {}),
+    ...patch,
+    updatedAt: new Date().toISOString()
+  };
+  db.prepare("UPDATE submissions SET test_assignment_json = ? WHERE id = ?").run(json(next), id);
+  return getSubmission(id);
 }
 
 function listSubmissions() {
@@ -261,6 +279,7 @@ module.exports = {
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
   insertSubmission,
+  updateTestAssignment,
   insertEvent,
   listEvents,
   listSubmissions,

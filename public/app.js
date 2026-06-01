@@ -234,6 +234,9 @@ const state = {
   analytics: null,
   selected: null,
   aiInsights: null,
+  completedSubmission: null,
+  testLink: "",
+  testSubmitted: false,
   user: null,
   config: null,
   configText: "",
@@ -407,6 +410,7 @@ function setConsent(id, checked) {
 function currentAppRoute() {
   if (location.pathname === "/privacy") return "privacy";
   if (location.pathname === "/personal-data-consent") return "personal-data-consent";
+  if (state.route.startsWith("#test/")) return "test-assignment";
   return state.route === "#admin" ? "admin" : "candidate";
 }
 
@@ -776,37 +780,124 @@ async function submitCandidate(event) {
   }
   const result = await response.json();
   trackEvent("completed");
+  state.completedSubmission = result;
   document.querySelector("#app").replaceChildren(thankYouView(result));
 }
 
 function thankYouView(result) {
+  if (result.nextStep?.testAssignmentEligible) return testInviteView(result);
+  return softDeclineView(result);
+}
+
+function testInviteView(result) {
   return el("main", { class: "final-shell" }, [
     brandMark(),
     el("section", { class: "final-card" }, [
       el("div", { class: "final-copy" }, [
         el("div", { class: "soft-label yellow" }, ["Анкета отправлена"]),
-        el("h1", {}, ["Спасибо, анкета отправлена"]),
-        el("p", { class: "lead" }, ["Мы получили ваши ответы и передали их HR-команде. Теперь посмотрим анкету, резюме и результаты первичного скоринга."]),
-        el("p", { class: "sublead" }, ["Мы не прощаемся: вернемся с обратной связью после проверки. Пожалуйста, проверьте, что указанные контакты доступны."]),
+        el("h1", {}, ["Отлично, идем дальше"]),
+        el("p", { class: "lead" }, ["Спасибо за ответы. По итогам анкеты видно, что ваш опыт может быть близок к нашей роли, поэтому предлагаем следующий небольшой шаг — показать себя в деле."]),
+        el("p", { class: "sublead" }, ["Это не большое тестовое на полдня, а короткое практическое задание, чтобы мы увидели ваш подход к SMM-мышлению, аналитике и гипотезам."]),
         el("div", { class: "pill-row" }, [
           el("span", { class: "pill green" }, ["ответы сохранены"]),
-          el("span", { class: "pill blue" }, ["HR получил карточку"]),
-          el("span", { class: "pill yellow" }, ["следующий шаг — проверка"])
+          el("span", { class: "pill blue" }, ["порог пройден"]),
+          el("span", { class: "pill yellow" }, ["следующий шаг — практика"])
         ]),
         el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`]),
-        el("a", { class: "btn primary final-done", href: "#candidate", onclick: () => {
-          state.hasStarted = false;
-          state.currentStep = 0;
-          render();
-        } }, ["Готово"])
+        el("a", { class: "btn primary final-done", href: result.nextStep.testAssignmentUrl }, ["Показать себя в деле", iconEl("arrow")])
       ]),
       el("aside", { class: "final-visual" }, [
         el("img", { src: "/assets/sasha-thumbs-up.png?v=1", alt: "SMM-гид благодарит кандидата" }),
-        el("div", { class: "speech-card" }, ["Отлично, спасибо! Мы не прощаемся и вернемся с обратной связью после первичной проверки."])
+        el("div", { class: "speech-card" }, ["Класс! Анкета выглядит сильной. Давайте посмотрим, как вы думаете на практике."])
       ])
     ]),
     siteFooter()
   ]);
+}
+
+function softDeclineView(result) {
+  return el("main", { class: "final-shell" }, [
+    brandMark(),
+    el("section", { class: "final-card decline-card" }, [
+      el("div", { class: "final-copy" }, [
+        el("div", { class: "soft-label yellow" }, ["Анкета отправлена"]),
+        el("h1", {}, ["Спасибо за ваш отклик"]),
+        el("p", { class: "lead" }, ["Мы внимательно приняли ваши ответы. Вы можете быть классным человеком и сильным специалистом, но по текущей роли мы, кажется, немного разные: сейчас нам нужен профиль с другим сочетанием опыта, аналитики и самостоятельности в SMM."]),
+        el("p", { class: "sublead" }, ["Желаем вам найти команду, где ваши сильные стороны раскроются максимально ярко. Пусть впереди будет больше интересных проектов, творческих задач и профессионального роста."]),
+        el("div", { class: "pill-row" }, [
+          el("span", { class: "pill blue" }, ["ответы сохранены"]),
+          el("span", { class: "pill yellow" }, ["решение по первому этапу"]),
+          el("span", { class: "pill green" }, ["спасибо за время"])
+        ]),
+        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`])
+      ]),
+      el("aside", { class: "final-visual" }, [
+        el("img", { src: "/assets/poses/sasha-q01.png?v=1", alt: "SMM-гид прощается с кандидатом" }),
+        el("div", { class: "speech-card" }, ["Спасибо, что прошли анкету. Удачи вам и больших творческих побед!"])
+      ])
+    ]),
+    siteFooter()
+  ]);
+}
+
+function testAssignmentView() {
+  const id = state.route.replace("#test/", "");
+  return el("main", { class: "final-shell test-shell" }, [
+    brandMark(),
+    el("section", { class: "test-card" }, [
+      el("header", { class: "test-head" }, [
+        el("div", {}, [
+          el("div", { class: "soft-label mint" }, ["Практическое задание"]),
+          el("h1", {}, ["Показать себя в деле"]),
+          el("p", { class: "lead" }, ["По итогам анкетирования мы видим, что можем попробовать поработать вместе. До личного знакомства предлагаем небольшой практический шаг: посмотреть на реальный SMM-профиль и показать, как вы думаете, анализируете и предлагаете улучшения."])
+        ]),
+        el("img", { src: "/assets/sasha-thumbs-up.png?v=1", alt: "Саша поддерживает кандидата" })
+      ]),
+      el("section", { class: "task-panel" }, [
+        el("h2", {}, ["Что нужно сделать"]),
+        el("p", {}, ["Подготовьте Google Документ с коротким аудитом Instagram-профиля: ", el("a", { href: "https://www.instagram.com/mednikova.promanagement/", target: "_blank", rel: "noopener noreferrer" }, ["@mednikova.promanagement"]), "."]),
+        el("ol", {}, [
+          el("li", {}, ["Опишите первое впечатление: что понятно сразу, а что вызывает вопросы."]),
+          el("li", {}, ["Найдите 3 сильные стороны профиля с точки зрения SMM."]),
+          el("li", {}, ["Найдите 3 зоны роста: упаковка, контент, визуал, stories, закрепы, CTA или путь к заявке."]),
+          el("li", {}, ["Предложите 5 конкретных гипотез улучшения на ближайшие 2 недели."]),
+          el("li", {}, ["Предложите 3-5 контент-единиц: пост, Reels, stories, Telegram-адаптация или другой формат."]),
+          el("li", {}, ["Укажите метрики, по которым вы бы проверяли результат."])
+        ]),
+        el("p", { class: "sublead" }, ["Сделайте документ открытым по ссылке для просмотра. Объем: 1-3 страницы, без длинной презентации. Важна логика, конкретика и аккуратная структура."])
+      ]),
+      el("section", { class: "task-submit" }, [
+        el("label", { class: "named-input" }, [
+          el("span", {}, ["Ссылка на Google Документ"]),
+          el("input", {
+            class: "input",
+            value: state.testLink,
+            placeholder: "https://docs.google.com/...",
+            oninput: event => { state.testLink = event.target.value; }
+          })
+        ]),
+        el("button", { class: "btn primary", onclick: () => submitTestAssignment(id) }, ["Отправить ссылку", iconEl("arrow")]),
+        state.testSubmitted ? el("p", { class: "success-note" }, ["Ссылка сохранена. Спасибо! HR увидит тестовое в вашей карточке."]) : el("div")
+      ])
+    ]),
+    siteFooter()
+  ]);
+}
+
+async function submitTestAssignment(id) {
+  const response = await fetch(`/api/submissions/${id}/test-assignment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ testLink: state.testLink })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить ссылку." }));
+    showToast(error.error || "Не удалось сохранить ссылку.");
+    return;
+  }
+  state.testSubmitted = true;
+  showToast("Ссылка на тестовое сохранена.");
+  render();
 }
 
 async function loadAdmin() {
@@ -1205,6 +1296,14 @@ function profileDrawer(item) {
         answerLine("Браузер", item.consents?.source?.userAgent)
       ]),
       el("section", { class: "profile-section" }, [
+        el("h3", {}, ["Тестовое задание"]),
+        answerLine("Выдано", item.testAssignment?.eligible ? "да" : "нет"),
+        answerLine("Статус", testAssignmentStatus(item.testAssignment)),
+        item.testAssignment?.link
+          ? answerLine("Ссылка", item.testAssignment.link)
+          : answerLine("Ссылка", "не отправлена")
+      ]),
+      el("section", { class: "profile-section" }, [
         el("h3", {}, ["Ответы"]),
         answerLine("Портфолио", item.candidate.portfolio),
         answerLine("Опыт", selectedText("experienceYears", item.answers.experienceYears)),
@@ -1228,6 +1327,13 @@ function consentText(consent) {
   if (!consent?.accepted) return "не зафиксировано";
   const date = consent.acceptedAt ? new Date(consent.acceptedAt).toLocaleString("ru-RU") : "дата не указана";
   return `${consent.version || "без версии"}; принято ${date}`;
+}
+
+function testAssignmentStatus(testAssignment) {
+  if (!testAssignment?.eligible) return "не назначалось";
+  if (testAssignment.status === "submitted") return "ссылка получена";
+  if (testAssignment.status === "assigned") return "ожидаем выполнение";
+  return testAssignment.status || "не назначалось";
 }
 
 function blockName(key) {
@@ -1463,6 +1569,8 @@ function render() {
   }
   const view = route === "admin"
     ? adminView()
+    : route === "test-assignment"
+      ? testAssignmentView()
     : route === "privacy" || route === "personal-data-consent"
       ? legalPage(route)
       : candidateView();

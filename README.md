@@ -20,6 +20,7 @@ https://hr.academy-management.ru/#admin
 - UI is built as a chat-like one-question-per-screen questionnaire.
 - Candidate accepts privacy policy and personal data consent before starting.
 - System stores answers, candidate data, score, recommendation, risk flags, consent versions and technical consent evidence.
+- Green candidates automatically receive a practical test assignment and can submit a Google Docs link.
 - HR sees dashboard, candidate list, candidate profile, score, strengths, risks and answers.
 - Admin analytics page shows funnel metrics, completion rate, quality distribution and visual charts.
 - Questionnaire methodology is editable in admin as JSON config.
