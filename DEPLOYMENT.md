@@ -32,6 +32,11 @@ ADMIN_PASSWORD=...
 ADMIN_PASSWORD_RESET=0
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
+
+AI_PROVIDER=yandex
+YANDEX_GPT_API_KEY=
+YANDEX_FOLDER_ID=
+YANDEX_GPT_MODEL=yandexgpt-lite
 ```
 
 Do not commit real env files, admin passwords, SSH keys, service account keys, or SQLite data.

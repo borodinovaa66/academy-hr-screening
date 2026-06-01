@@ -20,8 +20,12 @@ const PORT = Number(process.env.PORT || 4173);
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "hr-demo";
 const ADMIN_PASSWORD_RESET = process.env.ADMIN_PASSWORD_RESET === "1";
+const AI_PROVIDER = process.env.AI_PROVIDER || (process.env.YANDEX_GPT_API_KEY ? "yandex" : "openai");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const YANDEX_GPT_API_KEY = process.env.YANDEX_GPT_API_KEY || "";
+const YANDEX_FOLDER_ID = process.env.YANDEX_FOLDER_ID || "";
+const YANDEX_GPT_MODEL = process.env.YANDEX_GPT_MODEL || "yandexgpt-lite";
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
   personalDataConsent: "personal_data_consent_v2"
@@ -124,16 +128,33 @@ function publicCandidate(item) {
 }
 
 async function generateAiInsights(submissions, analytics) {
-  if (!OPENAI_API_KEY) {
-    return {
-      mode: "local",
-      summary: analytics.summary,
-      recommendations: analytics.recommendations,
-      risks: analytics.marketRisks
-    };
+  const fallback = (risk = null) => ({
+    mode: "local",
+    summary: analytics.summary,
+    recommendations: analytics.recommendations,
+    risks: risk ? [risk, ...analytics.marketRisks] : analytics.marketRisks
+  });
+
+  if (AI_PROVIDER === "yandex") {
+    if (!YANDEX_GPT_API_KEY || !YANDEX_FOLDER_ID) {
+      return fallback("AI-анализ не выполнен: не заданы YANDEX_GPT_API_KEY или YANDEX_FOLDER_ID.");
+    }
+    return generateYandexInsights(submissions, analytics).catch(error => (
+      fallback(`AI-анализ не выполнен: YandexGPT вернул ошибку: ${error.message}.`)
+    ));
   }
 
-  const compact = submissions.slice(-40).map(item => ({
+  if (!OPENAI_API_KEY) {
+    return fallback();
+  }
+
+  return generateOpenAiInsights(submissions, analytics).catch(error => (
+    fallback(`AI-анализ не выполнен: OpenAI вернул ошибку: ${error.message}.`)
+  ));
+}
+
+function compactSubmissions(submissions) {
+  return submissions.slice(-40).map(item => ({
     score: item.score.total,
     status: item.recommendation.status,
     projects: item.answers.projectTypes,
@@ -142,14 +163,59 @@ async function generateAiInsights(submissions, analytics) {
     income: item.answers.income,
     flags: item.flags.map(flag => flag.title)
   }));
+}
 
-  const prompt = [
+function aiPrompt(submissions, analytics) {
+  return [
     "Ты HR-аналитик для подбора SMM-менеджера.",
     "Проанализируй поток кандидатов и дай короткие практические рекомендации HR.",
     "Нужно выявить: качество рынка, слабые места вакансии, что исправить в описании вакансии, что проверить на интервью.",
     "Ответ строго JSON: {summary:string,recommendations:string[],risks:string[],interviewFocus:string[]}.",
-    JSON.stringify({ analytics, candidates: compact })
+    JSON.stringify({ analytics, candidates: compactSubmissions(submissions) })
   ].join("\n");
+}
+
+function parseAiJson(content) {
+  const text = String(content || "{}").trim();
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const jsonText = fenced ? fenced[1].trim() : text;
+  return JSON.parse(jsonText);
+}
+
+async function generateYandexInsights(submissions, analytics) {
+  const payload = {
+    modelUri: `gpt://${YANDEX_FOLDER_ID}/${YANDEX_GPT_MODEL}/latest`,
+    completionOptions: {
+      stream: false,
+      temperature: 0.2,
+      maxTokens: 1200
+    },
+    messages: [
+      { role: "system", text: "Отвечай по-русски, кратко, прикладно, без воды. Верни только валидный JSON без Markdown." },
+      { role: "user", text: aiPrompt(submissions, analytics) }
+    ]
+  };
+
+  const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+    method: "POST",
+    headers: {
+      "Authorization": `Api-Key ${YANDEX_GPT_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.result?.alternatives?.[0]?.message?.text || "{}";
+  return { mode: "yandex", ...parseAiJson(content) };
+}
+
+async function generateOpenAiInsights(submissions, analytics) {
+  const prompt = aiPrompt(submissions, analytics);
 
   const payload = {
     model: OPENAI_MODEL,
@@ -171,17 +237,12 @@ async function generateAiInsights(submissions, analytics) {
   });
 
   if (!response.ok) {
-    return {
-      mode: "local",
-      summary: analytics.summary,
-      recommendations: analytics.recommendations,
-      risks: [`AI-анализ не выполнен: OpenAI API вернул ${response.status}.`, ...analytics.marketRisks]
-    };
+    throw new Error(`HTTP ${response.status}`);
   }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content || "{}";
-  return { mode: "ai", ...JSON.parse(content) };
+  return { mode: "ai", ...parseAiJson(content) };
 }
 
 async function handleApi(req, res) {

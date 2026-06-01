@@ -23,6 +23,7 @@ https://hr.academy-management.ru/#admin
 - HR sees dashboard, candidate list, candidate profile, score, strengths, risks and answers.
 - Questionnaire methodology is editable in admin as JSON config.
 - AI analytics can be enabled with `OPENAI_API_KEY`; current legal/product policy is to use anonymized or aggregated data only.
+- AI analytics supports YandexGPT or OpenAI. Production pilot uses YandexGPT because the app runs in Yandex Cloud.
 
 ## Tech Stack
 
@@ -72,6 +73,11 @@ ADMIN_PASSWORD=change-this-password
 ADMIN_PASSWORD_RESET=0
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
+
+AI_PROVIDER=yandex
+YANDEX_GPT_API_KEY=
+YANDEX_FOLDER_ID=
+YANDEX_GPT_MODEL=yandexgpt-lite
 ```
 
 `ADMIN_PASSWORD_RESET=1` forces password reset for an existing database. Set it back to `0` after reset.
