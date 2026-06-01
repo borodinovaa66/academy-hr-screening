@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HR Screening Mockups</title>
+    <link rel="stylesheet" href="/mockups.css" />
+  </head>
+  <body>
+    <main class="mockup-shell">
+      <nav class="mockup-nav">
+        <strong>HR Screening / candidate flow</strong>
+        <span>Черно-белая база + мягкие пастельные акценты</span>
+      </nav>
+
+      <section class="screen welcome-screen" aria-label="Приветственный экран">
+        <div class="screen-copy center-copy">
+          <div class="soft-label mint">SMM-manager screening</div>
+          <h1>Привет! Давайте познакомимся</h1>
+          <p class="lead">
+            Мы рады, что вы заинтересовались вакансией SMM-менеджера.
+            Ответьте на несколько вопросов, чтобы мы быстрее поняли ваш опыт,
+            подход к работе и соответствие роли.
+          </p>
+          <p class="sublead">
+            Анкета займет около 7-10 минут. Здесь нет большого тестового задания:
+            большинство вопросов с выбором ответа, а открытых вопросов всего два.
+          </p>
+
+          <div class="pill-row">
+            <span class="pill blue">20 вопросов</span>
+            <span class="pill green">7-10 минут</span>
+            <span class="pill yellow">без длинного тестового</span>
+          </div>
+
+          <div class="consent-list">
+            <label class="consent checked">
+              <span></span>
+              <strong>Я согласен(на) с политикой конфиденциальности.</strong>
+            </label>
+            <label class="consent checked">
+              <span></span>
+              <strong>Я даю согласие на обработку персональных данных и ответов анкеты для первичного HR-отбора.</strong>
+            </label>
+          </div>
+
+          <button class="primary-action">Поехали →</button>
+        </div>
+
+        <aside class="character-zone welcome-character-zone">
+          <img src="/assets/smm-guide-character.png" alt="SMM-гид" />
+          <div class="bubble-note">
+            Я буду рядом по ходу анкеты. Отвечайте честно: это помогает не тратить ваше и наше время на неподходящие этапы.
+          </div>
+        </aside>
+      </section>
+
+      <section class="screen question-screen" aria-label="Экран вопроса с персонажем">
+        <header class="question-top">
+          <strong>HR Screening</strong>
+          <div class="progress">
+            <span>10 / 20</span>
+            <i><b style="width: 50%"></b></i>
+          </div>
+        </header>
+
+        <div class="question-layout-mock">
+          <aside class="character-zone compact-character-zone">
+            <img src="/assets/smm-guide-character.png" alt="SMM-гид" />
+            <div class="mini-card">
+              <strong>Саша, SMM-гид</strong>
+              <span>Этот вопрос показывает, как вы думаете контентом, а не просто постами.</span>
+            </div>
+          </aside>
+
+          <div class="question-card-mock">
+            <div class="soft-label peach">Мини-кейс</div>
+            <div class="chat-bubble">
+              <span>Вопрос 10 из 20</span>
+              <h2>
+                Вам дали экспертный текст на тему:
+                «5 ошибок компаний при построении маркетинговой воронки».
+                Какие 3-5 единиц контента вы бы сделали из него?
+              </h2>
+              <p>
+                Коротко, по делу. Нам важна логика: форматы, площадки,
+                CTA и понимание результата.
+              </p>
+            </div>
+
+            <textarea readonly>Например: карусель, Reels, stories-опрос, Telegram-разбор, чек-лист с CTA...</textarea>
+
+            <footer class="question-actions">
+              <button class="secondary-action">Назад</button>
+              <button class="primary-action small">Дальше →</button>
+            </footer>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen final-screen" aria-label="Финальный экран">
+        <div class="screen-copy center-copy">
+          <div class="soft-label yellow">Анкета отправлена</div>
+          <h1>Спасибо, мы получили ваши ответы</h1>
+          <p class="lead">
+            HR-команда изучит анкету, портфолио и результаты первичного скоринга.
+            Если опыт совпадает с задачами роли, мы свяжемся с вами и предложим
+            следующий этап.
+          </p>
+          <p class="sublead">
+            Обычно мы возвращаемся с обратной связью после первичной проверки.
+            Пожалуйста, проверьте, что указанные контакты доступны.
+          </p>
+          <div class="pill-row">
+            <span class="pill green">ответы сохранены</span>
+            <span class="pill blue">HR получил карточку</span>
+            <span class="pill yellow">следующий шаг — проверка</span>
+          </div>
+          <button class="primary-action">Готово</button>
+        </div>
+
+        <aside class="character-zone final-character-zone">
+          <img src="/assets/smm-guide-character.png" alt="SMM-гид благодарит кандидата" />
+          <div class="bubble-note">
+            Отлично, вы прошли первый этап. Дальше уже не анкета ради анкеты, а решение: стоит ли встречаться на интервью.
+          </div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

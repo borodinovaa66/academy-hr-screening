@@ -1,0 +1,12 @@
+{
+  "name": "hr-smm-screening",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MVP SaaS questionnaire for HR screening of SMM manager candidates.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

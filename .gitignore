@@ -1,0 +1,26 @@
+# Runtime data and secrets
+.env
+.env.*
+!.env.example
+.deploy-*.env
+.deploy-admin-password.txt
+data/
+logs/
+
+# Local deployment artifacts
+deploy-*.tgz
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local tunnels and generated previews
+tools/
+screenshots/
+
+# Dependencies and OS/editor noise
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
