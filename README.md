@@ -99,6 +99,7 @@ public/index.html         SPA entry point
 
 ## Documents
 
+- [Project handover](PROJECT_HANDOVER.md)
 - [Deployment](DEPLOYMENT.md)
 - [HR guide](HR_GUIDE.md)
 - [Security](SECURITY.md)

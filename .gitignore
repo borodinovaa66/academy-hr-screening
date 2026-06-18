@@ -16,6 +16,8 @@ deploy-*.tgz
 # Local tunnels and generated previews
 tools/
 screenshots/
+tmp-*.png
+Исходные материалы/
 
 # Dependencies and OS/editor noise
 node_modules/

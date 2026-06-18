@@ -14,6 +14,7 @@ const OPERATOR = {
   email: "hr@praktiki.pro",
   dataRetention: "6 месяцев"
 };
+const ADMIN_SECTIONS = new Set(["overview", "candidates", "interview", "analytics", "hiring", "hh", "staff", "audit"]);
 
 let labels = {
   experienceYears: {
@@ -199,11 +200,16 @@ let questions = [
   { section: "Культура и рабочее поведение", id: "deadlineBehavior", title: "Что вы делаете, если понимаете, что не успеваете к дедлайну?", type: "radio", required: true },
   { id: "weakPlanBehavior", title: "Что вы делаете, если видите, что текущий контент-план не даст результата?", type: "radio", required: true },
   { id: "feedbackBehavior", title: "Как вы реагируете на прямую обратную связь по своей работе?", type: "radio", required: true },
-  { section: "Ожидания", id: "expectations", title: "Формат работы, доход и дата выхода", type: "expectations" }
+  { section: "Ожидания", id: "workValues", title: "Что для вас ближе всего в работе?", type: "checkbox", maxPick: 3, required: true },
+  { id: "workFormat", title: "Какой формат работы вам подходит?", type: "checkbox", required: true },
+  { id: "income", title: "Какие у вас ожидания по доходу?", type: "text", required: true, placeholder: "Например: 120 000 руб." },
+  { id: "availability", title: "Когда вы готовы выйти?", type: "radio", required: true }
 ];
 
 const state = {
   route: location.hash || "#candidate",
+  activeVacancyCode: vacancyCodeFromPath(),
+  vacancies: {},
   answers: {
     projectTypes: [],
     socialNetworks: [],
@@ -215,6 +221,10 @@ const state = {
     noLeadsActions: [],
     workValues: [],
     workFormat: [],
+    domains: [],
+    projectResponsibilities: [],
+    projectTools: [],
+    resumeFile: null,
     firstName: "",
     lastName: "",
     fullName: "",
@@ -237,17 +247,191 @@ const state = {
   completedSubmission: null,
   testLink: "",
   testSubmitted: false,
+  testViewedIds: new Set(),
   user: null,
   config: null,
+  integrations: {},
   configText: "",
-  configOpen: false,
-  adminSection: "candidates",
+  adminSection: adminSectionFromHash(),
+  adminVacancyCode: adminVacancyCodeFromHash(),
+  adminUsers: [],
+  auditLogs: [],
+  staffPasswordDrafts: {},
+  loginUsername: localStorage.getItem(ADMIN_USER_KEY) || "",
+  loginPassword: "",
+  loginPasswordVisible: false,
+  hiringRequests: [],
+  vacancyOpenings: [],
+  hhTexts: [],
+  hhPublications: [],
+  hhPublicationDrafts: {},
+  hhExistingPublicationForm: {
+    vacancyCode: "",
+    url: "",
+    hhVacancyId: ""
+  },
+  hhStatus: null,
+  hhResponses: [],
+  interviewCandidateId: "",
+  interviewDrafts: {},
+  testManualDrafts: {},
+  hiringRequestForm: {
+    requestType: "start_existing",
+    vacancyCode: "",
+    title: "",
+    reason: "",
+    urgency: "normal",
+    desiredStartDate: "",
+    headcount: 1,
+    responsibilities: "",
+    expectedResult: "",
+    budget: "",
+    comment: ""
+  },
+  openingForm: {
+    vacancyCode: "",
+    reason: "",
+    urgency: "normal",
+    desiredStartDate: "",
+    headcount: 1,
+    recruitmentChannels: ["hh"]
+  },
+  staffForm: {
+    email: "",
+    displayName: "",
+    role: "hr",
+    password: "",
+    vacancyAccess: []
+  },
   trackedSteps: new Set(),
   loading: false
 };
 
+async function uploadResumeFile(file) {
+  if (!file) return;
+  const allowed = [".pdf", ".doc", ".docx"];
+  const ext = file.name.includes(".") ? `.${file.name.split(".").pop()}`.toLowerCase() : "";
+  if (!allowed.includes(ext)) {
+    showToast("Можно прикрепить только PDF, DOC или DOCX.");
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    showToast("Файл слишком большой. Максимум 8 МБ.");
+    return;
+  }
+  state.loading = true;
+  render();
+  const formData = new FormData();
+  formData.append("resume", file);
+  const response = await fetch("/api/uploads/resume", {
+    method: "POST",
+    body: formData
+  });
+  state.loading = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось загрузить файл." }));
+    showToast(error.error || "Не удалось загрузить файл.");
+    render();
+    return;
+  }
+  const data = await response.json();
+  state.answers.resumeFile = data.file;
+  const resumeQuestion = questions.find(question => question.type === "resumeAttachment");
+  if (resumeQuestion && !String(state.answers[resumeQuestion.id] || "").trim()) {
+    state.answers[resumeQuestion.id] = data.file.url;
+  }
+  showToast("Файл резюме прикреплен.");
+  render();
+}
+
+function vacancyCodeFromPath() {
+  const match = location.pathname.match(/^\/v\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]) : "smm";
+}
+
+function adminVacancyCodeFromHash() {
+  const match = location.hash.match(/^#admin\/([^/]+)/);
+  const value = match ? decodeURIComponent(match[1]) : "";
+  return value && !ADMIN_SECTIONS.has(value) ? value : "smm";
+}
+
+function adminSectionFromHash() {
+  const match = location.hash.match(/^#admin\/([^/]+)/);
+  if (!match) return "overview";
+  const value = decodeURIComponent(match[1]);
+  return ADMIN_SECTIONS.has(value) ? value : "vacancies";
+}
+
+function activeVacancy() {
+  return state.vacancies[state.activeVacancyCode] || {
+    code: state.activeVacancyCode,
+    title: state.config?.publicTitle || state.config?.title || "Вакансия",
+    adminTitle: state.config?.adminTitle || state.config?.publicTitle || "Вакансия"
+  };
+}
+
+function vacancyLabel(code = state.activeVacancyCode) {
+  const vacancy = state.vacancies[code];
+  return vacancy?.adminTitle || vacancy?.title || code;
+}
+
+function isOwner() {
+  return state.user?.role === "owner";
+}
+
+function isHrOrOwner() {
+  return state.user?.role === "owner" || state.user?.role === "hr";
+}
+
+function roleLabel(role) {
+  if (role === "owner") return "Владелец";
+  if (role === "hr") return "HR";
+  if (role === "hiring_manager") return "Руководитель-заказчик";
+  return role || "—";
+}
+
+function questionnaireUrl(code = state.adminVacancyCode || state.activeVacancyCode || "smm") {
+  return `${location.origin}/v/${encodeURIComponent(code)}`;
+}
+
+async function copyToClipboard(text, successText = "Ссылка скопирована.") {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const input = document.createElement("textarea");
+      input.value = text;
+      input.setAttribute("readonly", "readonly");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    showToast(successText);
+  } catch {
+    showToast("Не удалось скопировать ссылку. Скопируйте ее вручную из поля.");
+  }
+}
+
+function extractHhVacancyId(value) {
+  const text = String(value || "").trim();
+  const pathMatch = text.match(/\/vacancy\/(\d+)/i);
+  if (pathMatch) return pathMatch[1];
+  const queryMatch = text.match(/[?&]vacancy_id=(\d+)/i);
+  if (queryMatch) return queryMatch[1];
+  return /^\d+$/.test(text) ? text : "";
+}
+
 window.addEventListener("hashchange", () => {
   state.route = location.hash || "#candidate";
+  if (state.route.startsWith("#admin")) {
+    state.adminSection = adminSectionFromHash();
+    state.adminVacancyCode = adminVacancyCodeFromHash();
+    state.analytics = null;
+    state.submissions = [];
+  }
   render();
 });
 
@@ -272,7 +456,9 @@ function icon(name) {
     arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
     check: '<path d="m20 6-11 11-5-5"/>',
     filter: '<path d="M22 3H2l8 9.5V19l4 2v-8.5Z"/>',
-    eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'
+    eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+    trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+    copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
   };
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths[name] || paths.check}</svg>`;
 }
@@ -294,6 +480,7 @@ function trackEvent(eventType, step = null) {
     keepalive: true,
     body: JSON.stringify({
       sessionId: funnelSessionId(),
+      vacancyCode: state.activeVacancyCode,
       eventType,
       step
     })
@@ -301,8 +488,9 @@ function trackEvent(eventType, step = null) {
 }
 
 function trackLandingOnce() {
-  if (sessionStorage.getItem(FUNNEL_LANDING_KEY)) return;
-  sessionStorage.setItem(FUNNEL_LANDING_KEY, "1");
+  const key = `${FUNNEL_LANDING_KEY}_${state.activeVacancyCode}`;
+  if (sessionStorage.getItem(key)) return;
+  sessionStorage.setItem(key, "1");
   trackEvent("landing_view");
 }
 
@@ -318,6 +506,13 @@ function brandMark() {
 }
 
 function guideForQuestion(index, q) {
+  if (state.config?.guideCaptions?.[q.id]) {
+    const pose = String(Math.min(index + 1, 20)).padStart(2, "0");
+    return {
+      image: `/assets/poses/sasha-q${pose}.png?v=1`,
+      caption: state.config.guideCaptions[q.id]
+    };
+  }
   const captions = {
     fullName: "Начнем с простого: как к вам обращаться в переписке и документах.",
     contacts: "Оставьте email и телефон, чтобы HR мог быстро связаться с вами.",
@@ -338,7 +533,10 @@ function guideForQuestion(index, q) {
     deadlineBehavior: "Дедлайны проверяют ответственность и коммуникацию.",
     weakPlanBehavior: "Здесь важна проактивность: заметить проблему и предложить решение.",
     feedbackBehavior: "Обратная связь показывает, как человек растет в работе.",
-    expectations: "Финально сверяем формат, сроки и ожидания."
+    workValues: "Сверяем рабочие принципы и то, как вам комфортно взаимодействовать с командой.",
+    workFormat: "Уточняем формат, чтобы не тратить время на неподходящие условия.",
+    income: "Фиксируем ожидания по доходу до интервью.",
+    availability: "Понимаем, когда реально можно планировать выход."
   };
   const pose = String(Math.min(index + 1, 20)).padStart(2, "0");
   return {
@@ -360,15 +558,20 @@ function applyConfig(config) {
   state.config = config;
   labels = config.labels || labels;
   questions = config.questions || questions;
+  state.activeVacancyCode = config.vacancyCode || state.activeVacancyCode || "smm";
+  state.answers.vacancyCode = state.activeVacancyCode;
   state.answers.vacancyMin = config.defaults?.vacancyMin ?? state.answers.vacancyMin;
   state.answers.vacancyMax = config.defaults?.vacancyMax ?? state.answers.vacancyMax;
   state.configText = JSON.stringify(config, null, 2);
 }
 
 async function loadConfig() {
-  const response = await fetch("/api/config");
+  state.activeVacancyCode = vacancyCodeFromPath();
+  const response = await fetch(`/api/config?vacancy=${encodeURIComponent(state.activeVacancyCode)}`);
   if (!response.ok) throw new Error("Config load failed");
   const data = await response.json();
+  state.vacancies = data.vacancies || {};
+  state.integrations = data.integrations || {};
   applyConfig(data.config);
 }
 
@@ -381,6 +584,11 @@ function setAnswer(id, value, checked, maxPick) {
   } else {
     state.answers[id] = value;
   }
+  render();
+}
+
+function setQuestionRating(id, value) {
+  state.answers[id] = value;
   render();
 }
 
@@ -411,7 +619,7 @@ function currentAppRoute() {
   if (location.pathname === "/privacy") return "privacy";
   if (location.pathname === "/personal-data-consent") return "personal-data-consent";
   if (state.route.startsWith("#test/")) return "test-assignment";
-  return state.route === "#admin" ? "admin" : "candidate";
+  return state.route === "#admin" || state.route.startsWith("#admin/") ? "admin" : "candidate";
 }
 
 function progress() {
@@ -424,6 +632,12 @@ function currentQuestionNumber() {
 
 function stepComplete(q) {
   if (!q) return false;
+  if (q.type === "resumeAttachment") {
+    return String(state.answers[q.id] || "").trim().length > 0 || Boolean(state.answers.resumeFile?.url);
+  }
+  if (q.type === "questionRating") {
+    return Number(state.answers[q.id] || 0) > 0;
+  }
   if (q.type === "expectations") {
     return state.answers.workValues.length > 0 &&
       state.answers.workFormat.length > 0 &&
@@ -512,6 +726,36 @@ function field(q) {
       }
     });
   }
+  if (q.type === "resumeAttachment") {
+    return el("div", { class: "resume-upload-field" }, [
+      el("input", {
+        class: "input",
+        value: state.answers[q.id] || "",
+        placeholder: q.placeholder || "Ссылка на резюме или профиль",
+        oninput: event => {
+          state.answers[q.id] = event.target.value;
+          updateCurrentActionState();
+        }
+      }),
+      el("div", { class: "resume-upload-actions" }, [
+        el("label", { class: "btn ghost resume-upload-button" }, [
+          "Прикрепить файл",
+          el("input", {
+            type: "file",
+            accept: ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            onchange: event => uploadResumeFile(event.target.files?.[0])
+          })
+        ]),
+        state.answers.resumeFile
+          ? el("div", { class: "resume-file-note" }, [
+            el("strong", {}, ["Файл прикреплен: "]),
+            el("span", {}, [state.answers.resumeFile.originalName || "резюме"]),
+            el("small", {}, [`${formatFileSize(state.answers.resumeFile.size)}`])
+          ])
+          : el("p", { class: "resume-file-note" }, ["Можно вставить ссылку или прикрепить PDF/DOC/DOCX до 8 МБ."])
+      ])
+    ]);
+  }
   if (q.type === "textarea") {
     return el("div", { class: "textarea-wrap" }, [
       el("textarea", {
@@ -526,6 +770,27 @@ function field(q) {
         }
       }, [value || ""]),
       el("span", { class: "counter", "data-counter": q.id }, [`${String(value || "").length}/${q.max}`])
+    ]);
+  }
+  if (q.type === "questionRating") {
+    const rating = Number(value || 0);
+    const tone = rating <= 2 ? "red" : rating <= 4 ? "yellow" : "green";
+    return el("div", { class: "question-rating", role: "radiogroup", "aria-label": q.title }, [
+      el("div", { class: "question-rating-row" }, [1, 2, 3, 4, 5].map(score => {
+        const filled = rating >= score;
+        return el("button", {
+          type: "button",
+          class: `question-mark-rate ${filled ? `filled ${tone}` : ""}`,
+          "aria-label": `Оценка ${score} из 5`,
+          "aria-pressed": rating === score ? "true" : "false",
+          onclick: () => setQuestionRating(q.id, score)
+        }, ["?"]);
+      })),
+      rating ? el("p", { class: `rating-caption ${tone}` }, [
+        rating <= 2 ? "Спасибо, зафиксировали: вопросы нужно улучшить." :
+          rating <= 4 ? "Спасибо, зафиксировали: в целом полезно, но есть что усилить." :
+            "Спасибо, зафиксировали: вопросы показались полезными."
+      ]) : el("p", { class: "rating-caption" }, ["Нажмите на один из знаков вопроса."])
     ]);
   }
   if (q.type === "expectations") {
@@ -675,10 +940,15 @@ function candidateView() {
 }
 
 function chatHint(q) {
+  if (q.type === "questionRating") return "Выберите оценку от 1 до 5. Значки слева направо заполнятся цветом.";
   if (q.type === "textarea") return "Коротко, по делу. Нам важна логика, а не идеальный текст.";
   if (q.type === "namePair") return "Заполните два поля, чтобы HR мог корректно связаться с вами.";
   if (q.type === "contactPair") return "Укажите email и номер телефона. Другие контакты на этом этапе не нужны.";
   if (q.id === "portfolio") return "";
+  if (q.id === "workValues") return "Выберите до 3 вариантов, которые реально важны для вас в работе.";
+  if (q.id === "workFormat") return "Можно выбрать один или несколько подходящих форматов.";
+  if (q.id === "income") return "Укажите сумму или диапазон, на который вы ориентируетесь.";
+  if (q.id === "availability") return "Выберите ближайший реалистичный срок выхода.";
   if (q.type === "text") return "Заполните поле, чтобы HR мог корректно связаться с вами и посмотреть опыт.";
   if (q.type === "expectations") return "Это не влияет на профессиональный балл, но помогает HR понять операционные условия.";
   return "Выберите вариант, который ближе всего к вашему реальному опыту.";
@@ -686,18 +956,20 @@ function chatHint(q) {
 
 function welcomeView() {
   const canStart = state.consents.privacy && state.consents.dataProcessing;
+  const ui = state.config?.ui || {};
+  const facts = ui.facts || ["20 вопросов", "7-10 минут", "по делу"];
   return el("main", { class: "welcome-shell" }, [
     brandMark(),
     el("section", { class: "welcome-card" }, [
       el("div", { class: "welcome-copy" }, [
-        el("div", { class: "soft-label mint" }, ["SMM-manager screening"]),
-        el("h1", {}, ["Привет! Давайте познакомимся"]),
-        el("p", { class: "lead" }, ["Мы рады, что вы заинтересовались вакансией SMM-менеджера. Ответьте на несколько вопросов, чтобы мы быстрее поняли ваш опыт, подход к работе и соответствие роли."]),
-        el("p", { class: "sublead" }, ["Анкета займет около 7-10 минут. Большинство вопросов с выбором ответа, а открытых вопросов всего два."]),
+        el("div", { class: "soft-label mint" }, [ui.welcomeLabel || activeVacancy().title]),
+        el("h1", {}, [ui.welcomeTitle || "Привет! Давайте познакомимся"]),
+        el("p", { class: "lead" }, [ui.welcomeLead || state.config.intro || "Ответьте на несколько вопросов по вашему опыту."]),
+        el("p", { class: "sublead" }, [ui.welcomeSublead || "Анкета займет около 7-10 минут."]),
         el("div", { class: "pill-row" }, [
-          el("span", { class: "pill blue" }, ["20 вопросов"]),
-          el("span", { class: "pill green" }, ["7-10 минут"]),
-          el("span", { class: "pill yellow" }, ["по делу"])
+          el("span", { class: "pill blue" }, [facts[0] || "анкета"]),
+          el("span", { class: "pill green" }, [facts[1] || "быстро"]),
+          el("span", { class: "pill yellow" }, [facts[2] || "по делу"])
         ]),
         el("div", { class: "consent-action-panel" }, [
           el("div", { class: "consent-box" }, [
@@ -716,8 +988,8 @@ function welcomeView() {
         ])
       ]),
       el("div", { class: "welcome-visual" }, [
-        el("img", { src: "/assets/smm-guide-character.png", alt: "Помощник анкеты SMM", class: "welcome-character" }),
-        el("div", { class: "speech-card" }, ["Я Саша. Помогу вам пройти анкету и ответить на наши вопросы."])
+        el("img", { src: "/assets/smm-guide-character.png", alt: ui.guideAlt || "Помощник анкеты", class: "welcome-character" }),
+        el("div", { class: "speech-card" }, [ui.sashaIntro || "Я Саша. Помогу вам пройти анкету и ответить на наши вопросы."])
       ])
     ]),
     siteFooter()
@@ -764,6 +1036,7 @@ async function submitCandidate(event) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      vacancyCode: state.activeVacancyCode,
       answers: state.answers,
       consents: {
         privacy: state.consents.privacy,
@@ -789,26 +1062,47 @@ function thankYouView(result) {
   return softDeclineView(result);
 }
 
+function telegramDeepLink(candidateId) {
+  const username = state.integrations?.telegramBotUsername;
+  if (!username || !candidateId) return "";
+  return `https://t.me/${username}?start=c_${encodeURIComponent(candidateId)}`;
+}
+
+function telegramConnectBlock(resultOrId) {
+  const candidateId = typeof resultOrId === "string" ? resultOrId : resultOrId?.id;
+  const href = typeof resultOrId === "object" ? resultOrId?.nextStep?.telegramBotUrl || telegramDeepLink(candidateId) : telegramDeepLink(candidateId);
+  if (!href) return el("div");
+  return el("div", { class: "telegram-connect" }, [
+    el("div", {}, [
+      el("strong", {}, ["Получать уведомления в Telegram"]),
+      el("p", {}, ["Привяжите бот, чтобы мы могли присылать сообщения по следующим этапам подбора."])
+    ]),
+    el("a", { class: "btn ghost", href, target: "_blank", rel: "noopener noreferrer" }, ["Открыть Telegram", iconEl("arrow")])
+  ]);
+}
+
 function testInviteView(result) {
+  const ui = state.config?.ui || {};
   return el("main", { class: "final-shell" }, [
     brandMark(),
     el("section", { class: "final-card" }, [
       el("div", { class: "final-copy" }, [
         el("div", { class: "soft-label yellow" }, ["Анкета отправлена"]),
         el("h1", {}, ["Отлично, идем дальше"]),
-        el("p", { class: "lead" }, ["Спасибо за ответы. По итогам анкеты видно, что ваш опыт может быть близок к нашей роли, поэтому предлагаем следующий небольшой шаг — показать себя в деле."]),
-        el("p", { class: "sublead" }, ["Это не большое тестовое на полдня, а короткое практическое задание, чтобы мы увидели ваш подход к SMM-мышлению, аналитике и гипотезам."]),
+        el("p", { class: "lead" }, [ui.testLead || "Спасибо за ответы. По итогам анкеты видно, что ваш опыт может быть близок к нашей роли, поэтому предлагаем следующий небольшой шаг - показать себя в деле."]),
+        el("p", { class: "sublead" }, [ui.testSublead || "Это короткое практическое задание, чтобы мы увидели ваш подход к задачам роли."]),
         el("div", { class: "pill-row" }, [
           el("span", { class: "pill green" }, ["ответы сохранены"]),
           el("span", { class: "pill blue" }, ["порог пройден"]),
           el("span", { class: "pill yellow" }, ["следующий шаг — практика"])
         ]),
         el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`]),
-        el("a", { class: "btn primary final-done", href: result.nextStep.testAssignmentUrl }, ["Показать себя в деле", iconEl("arrow")])
+        el("a", { class: "btn primary final-done", href: result.nextStep.testAssignmentUrl }, ["Показать себя в деле", iconEl("arrow")]),
+        telegramConnectBlock(result)
       ]),
       el("aside", { class: "final-visual" }, [
-        el("img", { src: "/assets/sasha-thumbs-up.png?v=1", alt: "SMM-гид благодарит кандидата" }),
-        el("div", { class: "speech-card" }, ["Класс! Анкета выглядит сильной. Давайте посмотрим, как вы думаете на практике."])
+        el("img", { src: "/assets/sasha-thumbs-up.png?v=1", alt: "Саша благодарит кандидата" }),
+        el("div", { class: "speech-card" }, [ui.testSpeech || "Класс! Анкета выглядит сильной. Давайте посмотрим, как вы думаете на практике."])
       ])
     ]),
     siteFooter()
@@ -816,24 +1110,26 @@ function testInviteView(result) {
 }
 
 function softDeclineView(result) {
+  const ui = state.config?.ui || {};
   return el("main", { class: "final-shell" }, [
     brandMark(),
     el("section", { class: "final-card decline-card" }, [
       el("div", { class: "final-copy" }, [
         el("div", { class: "soft-label yellow" }, ["Анкета отправлена"]),
         el("h1", {}, ["Спасибо за ваш отклик"]),
-        el("p", { class: "lead" }, ["Мы внимательно приняли ваши ответы. Вы можете быть классным человеком и сильным специалистом, но по текущей роли мы, кажется, немного разные: сейчас нам нужен профиль с другим сочетанием опыта, аналитики и самостоятельности в SMM."]),
-        el("p", { class: "sublead" }, ["Желаем вам найти команду, где ваши сильные стороны раскроются максимально ярко. Пусть впереди будет больше интересных проектов, творческих задач и профессионального роста."]),
+        el("p", { class: "lead" }, [ui.declineLead || "Мы сохранили вашу анкету и передадим ее менеджеру по персоналу."]),
+        el("p", { class: "sublead" }, ["Если ваш опыт подойдет под текущие задачи роли, команда свяжется с вами по указанным контактам."]),
         el("div", { class: "pill-row" }, [
           el("span", { class: "pill blue" }, ["ответы сохранены"]),
           el("span", { class: "pill yellow" }, ["решение по первому этапу"]),
           el("span", { class: "pill green" }, ["спасибо за время"])
         ]),
-        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`])
+        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`]),
+        telegramConnectBlock(result)
       ]),
       el("aside", { class: "final-visual" }, [
-        el("img", { src: "/assets/poses/sasha-q01.png?v=1", alt: "SMM-гид прощается с кандидатом" }),
-        el("div", { class: "speech-card" }, ["Спасибо, что прошли анкету. Удачи вам и больших творческих побед!"])
+        el("img", { src: "/assets/poses/sasha-q01.png?v=1", alt: "Саша благодарит кандидата" }),
+        el("div", { class: "speech-card" }, [ui.declineSpeech || "Спасибо, что прошли анкету."])
       ])
     ]),
     siteFooter()
@@ -842,6 +1138,8 @@ function softDeclineView(result) {
 
 function testAssignmentView() {
   const id = state.route.replace("#test/", "");
+  setTimeout(() => markTestAssignmentViewed(id), 0);
+  const task = state.config?.testAssignment || {};
   return el("main", { class: "final-shell test-shell" }, [
     brandMark(),
     el("section", { class: "test-card" }, [
@@ -849,22 +1147,17 @@ function testAssignmentView() {
         el("div", {}, [
           el("div", { class: "soft-label mint" }, ["Практическое задание"]),
           el("h1", {}, ["Показать себя в деле"]),
-          el("p", { class: "lead" }, ["По итогам анкетирования мы видим, что можем попробовать поработать вместе. До личного знакомства предлагаем небольшой практический шаг: посмотреть на реальный SMM-профиль и показать, как вы думаете, анализируете и предлагаете улучшения."])
+          el("p", { class: "lead" }, [state.config?.ui?.testSublead || "До личного знакомства предлагаем небольшой практический шаг: показать, как вы думаете и решаете задачи роли."])
         ]),
         el("img", { src: "/assets/sasha-thumbs-up.png?v=1", alt: "Саша поддерживает кандидата" })
       ]),
       el("section", { class: "task-panel" }, [
         el("h2", {}, ["Что нужно сделать"]),
-        el("p", {}, ["Подготовьте Google Документ с коротким аудитом Instagram-профиля: ", el("a", { href: "https://www.instagram.com/mednikova.promanagement/", target: "_blank", rel: "noopener noreferrer" }, ["@mednikova.promanagement"]), "."]),
-        el("ol", {}, [
-          el("li", {}, ["Опишите первое впечатление: что понятно сразу, а что вызывает вопросы."]),
-          el("li", {}, ["Найдите 3 сильные стороны профиля с точки зрения SMM."]),
-          el("li", {}, ["Найдите 3 зоны роста: упаковка, контент, визуал, stories, закрепы, CTA или путь к заявке."]),
-          el("li", {}, ["Предложите 5 конкретных гипотез улучшения на ближайшие 2 недели."]),
-          el("li", {}, ["Предложите 3-5 контент-единиц: пост, Reels, stories, Telegram-адаптация или другой формат."]),
-          el("li", {}, ["Укажите метрики, по которым вы бы проверяли результат."])
-        ]),
-        el("p", { class: "sublead" }, ["Сделайте документ открытым по ссылке для просмотра. Объем: 1-3 страницы, без длинной презентации. Важна логика, конкретика и аккуратная структура."])
+        task.profileUrl
+          ? el("p", {}, ["Подготовьте Google Документ с коротким аудитом профиля: ", el("a", { href: task.profileUrl, target: "_blank", rel: "noopener noreferrer" }, [task.profileUrl]), "."])
+          : el("p", {}, [task.title || "Подготовьте короткое практическое задание по описанию ниже."]),
+        el("ol", {}, (task.instruction || []).map(text => el("li", {}, [text]))),
+        el("p", { class: "sublead" }, [`Сделайте документ открытым по ссылке для просмотра. Формат: ${task.submitFormat || "Google Документ с открытым доступом по ссылке"}. Важна логика, конкретика и аккуратная структура.`])
       ]),
       el("section", { class: "task-submit" }, [
         el("label", { class: "named-input" }, [
@@ -877,6 +1170,7 @@ function testAssignmentView() {
           })
         ]),
         el("button", { class: "btn primary", onclick: () => submitTestAssignment(id) }, ["Отправить ссылку", iconEl("arrow")]),
+        telegramConnectBlock(id),
         state.testSubmitted ? el("p", { class: "success-note" }, ["Ссылка сохранена. Спасибо! HR увидит тестовое в вашей карточке."]) : el("div")
       ])
     ]),
@@ -900,14 +1194,60 @@ async function submitTestAssignment(id) {
   render();
 }
 
+function markTestAssignmentViewed(id) {
+  if (state.testViewedIds.has(id)) return;
+  state.testViewedIds.add(id);
+  fetch(`/api/submissions/${id}/test-assignment/viewed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  }).catch(() => {});
+}
+
 async function loadAdmin() {
-  const [subs, analytics] = await Promise.all([
-    fetch("/api/admin/submissions"),
-    fetch("/api/admin/analytics")
-  ]);
+  const vacancy = encodeURIComponent(state.adminVacancyCode || "smm");
+  const requests = [
+    fetch(`/api/admin/submissions?vacancy=${vacancy}`),
+    fetch(`/api/admin/analytics?vacancy=${vacancy}`),
+    fetch("/api/admin/config"),
+    fetch("/api/admin/hiring-requests"),
+    fetch("/api/admin/vacancy-openings"),
+    fetch("/api/admin/hh-texts"),
+    fetch("/api/admin/hh-publications"),
+    fetch("/api/admin/hh/status"),
+    fetch("/api/admin/hh/responses")
+  ];
+  if (isOwner()) {
+    requests.push(fetch("/api/admin/users"));
+    requests.push(fetch("/api/admin/audit"));
+  }
+  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhResponsesResponse, usersResponse, auditResponse] = await Promise.all(requests);
   if (subs.status === 401 || analytics.status === 401) return false;
-  state.submissions = (await subs.json()).submissions;
-  state.analytics = (await analytics.json()).analytics;
+  if (subs.status === 403 || analytics.status === 403) {
+    showToast("У вашей учетной записи нет доступа к этой вакансии.");
+    return false;
+  }
+  const subsData = await subs.json();
+  const analyticsData = await analytics.json();
+  state.submissions = subsData.submissions;
+  state.analytics = analyticsData.analytics;
+  state.adminVacancyCode = subsData.vacancyCode || analyticsData.vacancyCode || state.adminVacancyCode;
+  if (configResponse?.ok) {
+    const configData = await configResponse.json();
+    state.vacancies = configData.vacancies || state.vacancies;
+    if (!state.vacancies[state.adminVacancyCode]) {
+      state.adminVacancyCode = Object.keys(state.vacancies)[0] || state.adminVacancyCode;
+    }
+    const adminConfig = configData.config?.vacancies?.[state.adminVacancyCode] || configData.config;
+    if (adminConfig) applyConfig(adminConfig);
+  }
+  if (hiringRequestsResponse?.ok) state.hiringRequests = (await hiringRequestsResponse.json()).requests;
+  if (openingsResponse?.ok) state.vacancyOpenings = (await openingsResponse.json()).openings;
+  if (hhTextsResponse?.ok) state.hhTexts = (await hhTextsResponse.json()).texts;
+  if (hhPublicationsResponse?.ok) state.hhPublications = (await hhPublicationsResponse.json()).publications;
+  if (hhStatusResponse?.ok) state.hhStatus = await hhStatusResponse.json();
+  if (hhResponsesResponse?.ok) state.hhResponses = (await hhResponsesResponse.json()).responses;
+  if (usersResponse?.ok) state.adminUsers = (await usersResponse.json()).users;
+  if (auditResponse?.ok) state.auditLogs = (await auditResponse.json()).logs;
   return true;
 }
 
@@ -922,32 +1262,79 @@ async function ensureAdminLoaded() {
   }
 }
 
+async function submitLogin() {
+  const username = state.loginUsername.trim();
+  const password = state.loginPassword;
+  if (!username || !password) {
+    showToast("Введите логин и пароль.");
+    return;
+  }
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  if (!response.ok) {
+    showToast("Неверный логин или пароль.");
+    return;
+  }
+  const data = await response.json();
+  state.user = data.user;
+  state.loginPassword = "";
+  localStorage.setItem(ADMIN_USER_KEY, data.user.username);
+  await loadAdmin();
+  render();
+}
+
 function loginView() {
-  let username = "admin";
-  let password = "";
   return el("main", { class: "login-shell" }, [
-    el("section", { class: "login-card" }, [
-      el("div", { class: "badge" }, [iconEl("user"), "Admin"]),
-      el("h1", {}, ["HR-кабинет"]),
-      el("p", {}, ["Введите логин и пароль администратора. Сессия хранится в защищенной HttpOnly-cookie."]),
-      el("input", { class: "input", type: "text", value: username, placeholder: "Логин", oninput: event => { username = event.target.value; } }),
-      el("input", { class: "input", type: "password", placeholder: "Пароль", oninput: event => { password = event.target.value; } }),
-      el("button", { class: "btn primary wide", onclick: async () => {
-        const response = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password })
-        });
-        if (!response.ok) {
-          showToast("Неверный пароль.");
-          return;
-        }
-        const data = await response.json();
-        state.user = data.user;
-        localStorage.setItem(ADMIN_USER_KEY, data.user.username);
-        await loadAdmin();
-        render();
-      } }, ["Войти", iconEl("arrow")])
+    el("form", {
+      class: "login-card",
+      autocomplete: "on",
+      onsubmit: event => {
+        event.preventDefault();
+        submitLogin();
+      }
+    }, [
+      el("div", { class: "badge" }, [iconEl("user"), "Вход для команды"]),
+      el("h1", {}, ["HR-платформа"]),
+      el("p", {}, ["Войдите под выданным логином: владелец, HR или руководитель-заказчик вакансии. Доступ и разделы определяются вашей ролью."]),
+      el("label", { class: "named-input login-field" }, [
+        el("span", {}, ["Логин"]),
+        el("input", {
+          class: "input",
+          type: "text",
+          name: "username",
+          autocomplete: "username",
+          value: state.loginUsername,
+          placeholder: "Почта или логин",
+          oninput: event => { state.loginUsername = event.target.value; }
+        })
+      ]),
+      el("label", { class: "named-input login-field" }, [
+        el("span", {}, ["Пароль"]),
+        el("div", { class: "password-field" }, [
+          el("input", {
+            class: "input",
+            type: state.loginPasswordVisible ? "text" : "password",
+            name: "password",
+            autocomplete: "current-password",
+            value: state.loginPassword,
+            placeholder: "Пароль",
+            oninput: event => { state.loginPassword = event.target.value; }
+          }),
+          el("button", {
+            class: "password-toggle",
+            type: "button",
+            title: state.loginPasswordVisible ? "Скрыть пароль" : "Показать пароль",
+            onclick: () => {
+              state.loginPasswordVisible = !state.loginPasswordVisible;
+              render();
+            }
+          }, [iconEl("eye")])
+        ])
+      ]),
+      el("button", { class: "btn primary wide", type: "submit" }, ["Войти", iconEl("arrow")])
     ])
   ]);
 }
@@ -964,9 +1351,287 @@ function adminNavButton(section, label, iconName) {
     class: `btn ghost ${state.adminSection === section ? "active" : ""}`,
     onclick: () => {
       state.adminSection = section;
+      const hash = section === "overview" ? "#admin" : `#admin/${section}`;
+      if (location.hash !== hash) history.replaceState(null, "", hash);
       render();
     }
   }, [iconEl(iconName), label]);
+}
+
+function adminVacancyButton(code, vacancy) {
+  return el("button", {
+    class: `admin-subnav ${state.adminSection === "vacancies" && state.adminVacancyCode === code ? "active" : ""}`,
+    onclick: async () => {
+      state.adminSection = "vacancies";
+      state.adminVacancyCode = code;
+      if (location.hash !== `#admin/${code}`) history.replaceState(null, "", `#admin/${code}`);
+      state.selected = null;
+      state.aiInsights = null;
+      state.loading = true;
+      render();
+      await loadAdmin();
+      state.loading = false;
+      render();
+    }
+  }, [vacancy.adminTitle || vacancy.title || code]);
+}
+
+function adminSidebar() {
+  const vacancies = Object.entries(state.vacancies || {});
+  return el("aside", { class: "admin-sidebar" }, [
+    el("div", { class: "admin-menu-group" }, [
+      el("span", { class: "admin-menu-title" }, ["Разделы"]),
+      adminNavButton("overview", "Обзор", "chart"),
+      adminNavButton("candidates", "Кандидаты", "list"),
+      adminNavButton("interview", "Интервью", "user"),
+      adminNavButton("analytics", "Аналитика", "chart"),
+      adminNavButton("hiring", "Подобрать сотрудника", "filter"),
+      adminNavButton("hh", "HeadHunter", "copy"),
+      ...(isOwner() ? [
+        adminNavButton("staff", "Сотрудники", "user"),
+        adminNavButton("audit", "Журнал", "list")
+      ] : [])
+    ]),
+    el("div", { class: "admin-menu-group" }, [
+      el("span", { class: "admin-menu-title" }, ["Вакансии"]),
+      ...(vacancies.length ? vacancies.map(([code, vacancy]) => adminVacancyButton(code, vacancy)) : [
+        adminVacancyButton("smm", { adminTitle: "SMM" }),
+        adminVacancyButton("project-manager", { adminTitle: "Проджект" })
+      ])
+    ])
+  ]);
+}
+
+function pluralRu(number, one, few, many) {
+  const value = Math.abs(Number(number || 0));
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+function activeOpeningCount() {
+  return (state.vacancyOpenings || []).filter(item => !["closed", "cancelled"].includes(item.status)).length;
+}
+
+function overviewMetric(label, value, note = "", tone = "") {
+  return el("div", { class: `overview-metric ${tone}` }, [
+    el("span", {}, [label]),
+    el("strong", {}, [String(value)]),
+    note ? el("em", {}, [note]) : el("em")
+  ]);
+}
+
+function overviewVacancyCard(code, vacancy) {
+  const title = vacancy.adminTitle || vacancy.title || code;
+  const url = questionnaireUrl(code);
+  const status = vacancy.active === false ? "приостановлена" : "активна";
+  return el("div", { class: `overview-vacancy-card ${vacancy.active === false ? "paused" : ""}` }, [
+    el("div", {}, [
+      el("strong", {}, [title]),
+      el("span", {}, [`Опросник: /v/${code}`])
+    ]),
+    el("div", { class: "overview-card-actions" }, [
+      el("button", {
+        class: "btn ghost",
+        onclick: async () => {
+          state.adminSection = "vacancies";
+          state.adminVacancyCode = code;
+          history.replaceState(null, "", `#admin/${code}`);
+          state.selected = null;
+          state.aiInsights = null;
+          state.loading = true;
+          render();
+          await loadAdmin();
+          state.loading = false;
+          render();
+        }
+      }, ["Открыть"]),
+      el("button", {
+        class: "btn ghost",
+        onclick: () => copyToClipboard(url, `Ссылка на опросник "${title}" скопирована.`)
+      }, [iconEl("copy"), "Ссылка"])
+    ]),
+    el("div", { class: `status-pill ${vacancy.active === false ? "red" : "green"}` }, [status])
+  ]);
+}
+
+function adminOverviewView() {
+  const vacancies = Object.entries(state.vacancies || {});
+  const activeVacancies = vacancies.filter(([, vacancy]) => vacancy.active !== false).length;
+  const openings = activeOpeningCount();
+  const hhConnected = Boolean(state.hhStatus?.account?.connected);
+  const staffCount = state.adminUsers?.length || 0;
+  const currentVacancy = vacancyLabel(state.adminVacancyCode);
+  return el("section", { class: "overview-page" }, [
+    el("header", { class: "dash-header overview-hero" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("chart"), "Общий центр подбора"]),
+        el("h1", {}, ["HR Screening"]),
+        el("p", {}, ["Здесь общий вход в систему подбора: вакансии, запуски, кандидаты, HeadHunter, сотрудники и журнал действий. Конкретная SMM-воронка открывается отдельно через список вакансий."])
+      ])
+    ]),
+    el("div", { class: "overview-metrics" }, [
+      overviewMetric("Вакансий в системе", vacancies.length || 0, `${activeVacancies} ${pluralRu(activeVacancies, "активная", "активные", "активных")}`, "green"),
+      overviewMetric("Подбор сотрудников", openings, openings ? "есть активные запросы" : "активных подборов нет", "yellow"),
+      overviewMetric("Текущая воронка", currentVacancy, "для детальной аналитики и кандидатов"),
+      overviewMetric("HeadHunter", hhConnected ? "подключен" : "не подключен", hhConnected ? "можно синхронизировать отклики" : "можно подготовить ручную публикацию", hhConnected ? "green" : "red"),
+      overviewMetric("Сотрудников", staffCount || "—", isOwner() ? "пользователи и права доступа" : "доступно владельцу")
+    ]),
+    el("section", { class: "overview-section" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Вакансии в работе"]),
+        el("span", {}, ["Откройте конкретную вакансию, чтобы увидеть кандидатов, аналитику и ссылку на опросник."])
+      ]),
+      vacancies.length ? el("div", { class: "overview-vacancy-grid" }, vacancies.map(([code, vacancy]) => overviewVacancyCard(code, vacancy))) : el("div", { class: "empty" }, ["Пока нет заведенных вакансий."])
+    ]),
+    el("section", { class: "overview-section overview-guide" }, [
+      el("div", {}, [
+        el("h2", {}, ["Как работать с системой"]),
+        el("ol", {}, [
+          el("li", {}, ["Откройте нужную вакансию в блоке «Вакансии в работе»."]),
+          el("li", {}, ["Скопируйте ссылку на опросник и отправьте кандидату или используйте ее для HeadHunter."]),
+          el("li", {}, ["Смотрите кандидатов, баллы, тестовые задания и рекомендации по конкретной вакансии."]),
+          el("li", {}, ["Раз в несколько дней проверяйте аналитику, чтобы понять качество потока и слабые места воронки."])
+        ])
+      ]),
+      el("div", { class: "overview-note" }, [
+        el("strong", {}, ["Важно"]),
+        el("p", {}, ["Этот экран не оценивает кандидатов и не относится к одной вакансии. Он нужен как нейтральная стартовая панель для всей HR-системы."])
+      ])
+    ])
+  ]);
+}
+
+function adminQuestionnaireLinksPanel() {
+  const code = state.adminVacancyCode || "smm";
+  const vacancy = state.vacancies?.[code] || { adminTitle: vacancyLabel(code) };
+  const url = questionnaireUrl(code);
+  return el("section", { class: "table-panel questionnaire-links-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Ссылка на опросник"]),
+        el("span", {}, ["Для отправки кандидату, публикации в вакансии или передачи менеджеру по персоналу."])
+      ])
+    ]),
+    el("div", { class: "questionnaire-link-list" }, [
+      el("div", { class: "questionnaire-link-row active" }, [
+        el("div", { class: "questionnaire-link-meta" }, [
+          el("strong", {}, [vacancy.adminTitle || vacancy.title || code]),
+          el("input", {
+            class: "questionnaire-link-input",
+            readonly: "readonly",
+            value: url,
+            onclick: event => event.target.select()
+          })
+        ]),
+        el("button", {
+          class: "btn ghost copy-link-button",
+          onclick: () => copyToClipboard(url, `Ссылка на опросник "${vacancy.adminTitle || vacancy.title || code}" скопирована.`)
+        }, [iconEl("copy"), "Копировать"])
+      ])
+    ])
+  ]);
+}
+
+function pctText(value, total) {
+  if (!total) return "—";
+  return `${Math.round((Number(value || 0) / Number(total || 1)) * 100)}%`;
+}
+
+function metricValue(value) {
+  return value === null || value === undefined || value === "" ? "—" : String(value);
+}
+
+function selectedVacancyHhPublications() {
+  const code = state.adminVacancyCode || "smm";
+  return (state.hhPublications || []).filter(item => item.vacancyCode === code);
+}
+
+function selectedVacancyHhResponses() {
+  const code = state.adminVacancyCode || "smm";
+  return (state.hhResponses || []).filter(item => item.vacancyCode === code);
+}
+
+function sumKnown(values) {
+  let hasKnown = false;
+  const sum = values.reduce((acc, value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return acc;
+    hasKnown = true;
+    return acc + numeric;
+  }, 0);
+  return hasKnown ? sum : null;
+}
+
+function vacancyChannelMetrics(analytics) {
+  const publications = selectedVacancyHhPublications();
+  const responses = selectedVacancyHhResponses();
+  const hhViews = sumKnown(publications.map(item => item.payload?.hhMetrics?.views));
+  const hhResponsesFromMetrics = sumKnown(publications.map(item => item.payload?.hhMetrics?.responses));
+  const hhResponses = Math.max(responses.length, hhResponsesFromMetrics || 0);
+  const sentQuestionnaires = responses.filter(item => item.questionnaireSent).length;
+  const funnel = analytics.funnel || {};
+  return {
+    publications,
+    hhViews,
+    hhResponses,
+    sentQuestionnaires,
+    landingViews: funnel.visitors || 0,
+    started: funnel.started || 0,
+    completed: analytics.total || 0,
+    hhViewToResponse: hhViews ? pctText(hhResponses, hhViews) : "—",
+    responseToQuestionnaire: hhResponses ? pctText(sentQuestionnaires, hhResponses) : "—",
+    visitToComplete: funnel.visitToComplete !== undefined ? `${funnel.visitToComplete}%` : pctText(analytics.total || 0, funnel.visitors || 0),
+    lastSyncAt: publications
+      .map(item => item.payload?.hhMetrics?.fetchedAt || item.updatedAt)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null
+  };
+}
+
+function channelMetricCard(label, value, note = "") {
+  return el("div", { class: "channel-metric-card" }, [
+    el("span", {}, [label]),
+    el("strong", {}, [metricValue(value)]),
+    note ? el("em", {}, [note]) : el("em")
+  ]);
+}
+
+function vacancyMetricsDashboard(analytics) {
+  const metrics = vacancyChannelMetrics(analytics);
+  const hasHhPublication = metrics.publications.some(item => item.hhVacancyId);
+  const lastSync = metrics.lastSyncAt ? formatDateTime(metrics.lastSyncAt) : "еще не синхронизировалось";
+  return el("section", { class: "table-panel vacancy-channel-dashboard" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Метрики воронки"]),
+        el("span", {}, ["Короткий срез по HeadHunter и переходам на наш опросник."])
+      ]),
+      hasHhPublication ? el("button", {
+        class: "btn ghost",
+        onclick: async () => {
+          const publication = metrics.publications.find(item => item.hhVacancyId);
+          if (!publication) return;
+          await saveAndSyncHhResponses(publication);
+        }
+      }, ["Синхронизировать HH"]) : el("span", { class: "muted" }, ["HH-вакансия еще не привязана"])
+    ]),
+    el("div", { class: "channel-metrics-grid" }, [
+      channelMetricCard("Просмотры HH", metrics.hhViews, metrics.hhViews === null ? "HH пока не отдал счетчик" : "карточка вакансии"),
+      channelMetricCard("Отклики HH", metrics.hhResponses, "синхронизированные отклики"),
+      channelMetricCard("Анкета отправлена", metrics.sentQuestionnaires, `${metrics.responseToQuestionnaire} от откликов`),
+      channelMetricCard("Переходы на опросник", metrics.landingViews, "уникальные сессии"),
+      channelMetricCard("Начали анкету", metrics.started, "нажали старт"),
+      channelMetricCard("Заполнили анкету", metrics.completed, `${metrics.visitToComplete} от переходов`)
+    ]),
+    el("p", { class: "channel-dashboard-note" }, [
+      `Последняя синхронизация HH: ${lastSync}. `,
+      "Просмотры доступны только если HeadHunter отдает их через API для подключенного работодателя; отклики и анкеты считаются платформой."
+    ])
+  ]);
 }
 
 function statusBar(analytics) {
@@ -979,14 +1644,25 @@ function statusBar(analytics) {
 }
 
 function candidateRow(item) {
-  return el("button", { class: "candidate-row", onclick: () => openSubmission(item.id) }, [
-    el("div", {}, [
-      el("strong", {}, [item.candidate.fullName || "Без имени"]),
-      el("span", {}, [new Date(item.submittedAt).toLocaleString("ru-RU")])
+  const rowScore = item.funnelReview?.totalScore ?? item.score.total;
+  const rowRecommendation = item.funnelReview?.recommendation || item.recommendation;
+  const rowCode = rowRecommendation.code === "pending" ? item.recommendation.code : rowRecommendation.code;
+  return el("div", { class: "candidate-row" }, [
+    el("button", { class: "candidate-open", onclick: () => openSubmission(item.id) }, [
+      el("div", {}, [
+        el("strong", {}, [item.candidate.fullName || "Без имени"]),
+        el("span", {}, [new Date(item.submittedAt).toLocaleString("ru-RU")])
+      ]),
+      el("div", { class: `score-badge ${rowCode}` }, [`${rowScore}`]),
+      el("div", { class: `status-pill ${rowCode}` }, [rowRecommendation.label]),
+      el("span", { class: "row-icon", html: icon("eye") })
     ]),
-    el("div", { class: `score-badge ${item.recommendation.code}` }, [`${item.score.total}`]),
-    el("div", { class: `status-pill ${item.recommendation.code}` }, [item.recommendation.label]),
-    el("span", { class: "row-icon", html: icon("eye") })
+    isHrOrOwner() ? el("button", {
+      class: "row-delete",
+      title: "Удалить тестовую запись",
+      "aria-label": `Удалить ${item.candidate.fullName || "кандидата"}`,
+      onclick: () => deleteSubmission(item)
+    }, [iconEl("trash")]) : el("div")
   ]);
 }
 
@@ -997,23 +1673,509 @@ async function openSubmission(id) {
   render();
 }
 
+async function deleteSubmission(item) {
+  const name = item.candidate.fullName || "этого кандидата";
+  const confirmed = window.confirm(`Удалить запись "${name}"? Это действие нельзя отменить.`);
+  if (!confirmed) return;
+  const response = await fetch(`/api/admin/submissions/${item.id}`, { method: "DELETE" });
+  if (!response.ok) return showToast("Не удалось удалить запись.");
+  if (state.selected?.id === item.id) state.selected = null;
+  await loadAdmin();
+  showToast("Запись удалена.");
+  render();
+}
+
 async function runAiInsights() {
   state.loading = true;
   render();
-  const response = await fetch("/api/admin/ai-insights", { method: "POST" });
+  const response = await fetch(`/api/admin/ai-insights?vacancy=${encodeURIComponent(state.adminVacancyCode || "smm")}`, { method: "POST" });
   state.loading = false;
   if (!response.ok) return showToast("AI-анализ не запустился.");
   state.aiInsights = (await response.json()).insights;
   render();
 }
 
+async function evaluateTestAssignmentForSelected(id) {
+  state.loading = true;
+  render();
+  const response = await fetch(`/api/admin/submissions/${id}/test-assignment/evaluate`, { method: "POST" });
+  state.loading = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось оценить тестовое задание." }));
+    showToast(error.error || "Не удалось оценить тестовое задание.");
+    render();
+    return;
+  }
+  const data = await response.json();
+  state.selected = data.submission;
+  await loadAdmin();
+  showToast("Оценка тестового задания готова.");
+  render();
+}
+
+function canReviewTestAssignment() {
+  return ["owner", "hr", "hiring_manager"].includes(state.user?.role);
+}
+
+function testManualDraft(item) {
+  const review = item.testAssignment?.manualReview || {};
+  if (!state.testManualDrafts[item.id]) {
+    state.testManualDrafts[item.id] = {
+      score: review.score ?? "",
+      decision: review.decision || "",
+      comment: review.comment || ""
+    };
+  }
+  return state.testManualDrafts[item.id];
+}
+
+async function saveManualTestReview(item) {
+  const draft = testManualDraft(item);
+  const score = Number(draft.score);
+  if (!Number.isFinite(score) || score < 0 || score > 100) {
+    showToast("Укажите ручной балл от 0 до 100.");
+    return;
+  }
+  const response = await fetch(`/api/admin/submissions/${item.id}/test-assignment/manual-review`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить ручную оценку." }));
+    showToast(error.error || "Не удалось сохранить ручную оценку.");
+    return;
+  }
+  const data = await response.json();
+  state.selected = data.submission;
+  state.testManualDrafts[item.id] = {
+    score: data.submission.testAssignment?.manualReview?.score ?? "",
+    decision: data.submission.testAssignment?.manualReview?.decision || "",
+    comment: data.submission.testAssignment?.manualReview?.comment || ""
+  };
+  await loadAdmin();
+  showToast("Оценка руководителя сохранена.");
+  render();
+}
+
 function analyticsList(title, items, field) {
+  const descriptions = {
+    projectTypes: "Какие рынки и форматы чаще всего встречаются у кандидатов.",
+    tools: "Какими рабочими сервисами владеет поток кандидатов.",
+    metrics: "С какими показателями кандидаты регулярно работали."
+  };
   return el("div", { class: "mini-panel" }, [
     el("h3", {}, [title]),
+    descriptions[field] ? el("p", { class: "mini-panel-note" }, [descriptions[field]]) : el("div"),
     ...(items.length ? items.map(item => el("div", { class: "rank-row" }, [
       el("span", {}, [optionLabel(field, item.key)]),
       el("strong", {}, [String(item.count)])
-    ])) : [el("p", { class: "muted" }, ["Данных пока нет."])])
+    ])) : [el("p", { class: "muted empty-hint" }, ["Появится после первых заполненных анкет."])])
+  ]);
+}
+
+function currentInterviewConfig() {
+  return state.config?.interview || {};
+}
+
+function interviewCandidate() {
+  const id = state.interviewCandidateId || state.submissions[0]?.id || "";
+  return state.submissions.find(item => item.id === id) || state.submissions[0] || null;
+}
+
+function interviewDraft(candidate) {
+  if (!candidate) return {};
+  if (!state.interviewDrafts[candidate.id]) {
+    state.interviewDrafts[candidate.id] = {
+      status: "draft",
+      interviewer: candidate.interview?.interviewer || state.user?.displayName || state.user?.username || "",
+      interviewDate: candidate.interview?.interviewDate || new Date().toISOString().slice(0, 10),
+      scriptNotes: { ...(candidate.interview?.scriptNotes || {}) },
+      scorecard: { ...(candidate.interview?.scorecard || {}) },
+      cases: { ...(candidate.interview?.cases || {}) },
+      decision: { ...(candidate.interview?.decision || {}) },
+      evaluation: candidate.interview?.evaluation || null
+    };
+  }
+  return state.interviewDrafts[candidate.id];
+}
+
+function setInterviewDraft(candidate, updater) {
+  if (!candidate) return;
+  const draft = interviewDraft(candidate);
+  updater(draft);
+}
+
+function updateSubmissionInState(updated) {
+  state.submissions = state.submissions.map(item => item.id === updated.id ? updated : item);
+  if (state.selected?.id === updated.id) state.selected = updated;
+  state.interviewDrafts[updated.id] = {
+    status: "draft",
+    ...(updated.interview || {}),
+    scriptNotes: { ...(updated.interview?.scriptNotes || {}) },
+    scorecard: { ...(updated.interview?.scorecard || {}) },
+    cases: { ...(updated.interview?.cases || {}) },
+    decision: { ...(updated.interview?.decision || {}) }
+  };
+}
+
+async function saveInterviewDraft(candidate, silent = false) {
+  if (!candidate) return null;
+  const response = await fetch(`/api/admin/submissions/${candidate.id}/interview`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ interview: interviewDraft(candidate) })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить интервью." }));
+    showToast(error.error || "Не удалось сохранить интервью.");
+    return null;
+  }
+  const data = await response.json();
+  updateSubmissionInState(data.submission);
+  if (!silent) showToast("Заметки интервью сохранены.");
+  return data.submission;
+}
+
+async function evaluateInterviewDraft(candidate) {
+  if (!candidate) return;
+  state.loading = true;
+  render();
+  const saved = await saveInterviewDraft(candidate, true);
+  if (!saved) {
+    state.loading = false;
+    render();
+    return;
+  }
+  const response = await fetch(`/api/admin/submissions/${candidate.id}/interview/evaluate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ interview: interviewDraft(saved) })
+  });
+  state.loading = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось оценить интервью." }));
+    showToast(error.error || "Не удалось оценить интервью.");
+    render();
+    return;
+  }
+  const data = await response.json();
+  updateSubmissionInState(data.submission);
+  await loadAdmin();
+  showToast("AI-оценка интервью готова.");
+  render();
+}
+
+function ratingSelect(value, onchange) {
+  return el("select", { class: "rating-select", onchange }, [
+    el("option", { value: "" }, ["Оценка"]),
+    ...[1, 2, 3, 4, 5].map(score => el("option", { value: String(score), selected: Number(value) === score ? "selected" : null }, [`${score}`]))
+  ]);
+}
+
+function interviewScriptPanel(interview) {
+  return el("section", { class: "interview-script panel-card" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Скрипт интервью"]),
+        el("span", {}, [interview.duration || "45-60 минут"])
+      ])
+    ]),
+    el("div", { class: "script-note" }, [interview.sourceNote || "Структурированное интервью с проективными вопросами и кейсами."]),
+    ...(interview.intro || []).map(text => el("p", { class: "script-lead" }, [text])),
+    el("div", { class: "script-grid" }, (interview.structure || []).map(item => el("div", { class: "script-step" }, [
+      el("strong", {}, [item.title]),
+      el("span", {}, [item.timing || ""]),
+      el("p", {}, [item.description || ""])
+    ]))),
+    el("div", { class: "script-block" }, [
+      el("h3", {}, ["Принципы"]),
+      ...(interview.principles || []).map(text => el("p", {}, [text]))
+    ]),
+    el("div", { class: "script-block" }, [
+      el("h3", {}, ["Проективные вопросы"]),
+      ...(interview.projectiveBlocks || []).map(block => el("details", { class: "script-details", open: "open" }, [
+        el("summary", {}, [block.title]),
+        ...(block.questions || []).map(question => el("div", { class: "script-question" }, [
+          el("strong", {}, [question.text]),
+          el("span", {}, [question.goal || ""])
+        ]))
+      ]))
+    ]),
+    el("div", { class: "script-block" }, [
+      el("h3", {}, ["Кейсы"]),
+      ...(interview.cases || []).map(item => el("details", { class: "script-details" }, [
+        el("summary", {}, [item.title]),
+        el("p", {}, [item.situation || ""]),
+        el("ul", {}, (item.questions || []).map(text => el("li", {}, [text]))),
+        el("span", { class: "script-source" }, [`Оцениваем: ${item.evaluates || ""}`])
+      ]))
+    ])
+  ]);
+}
+
+function interviewCandidateSelector(candidate) {
+  return el("label", { class: "named-input interview-candidate-select" }, [
+    el("span", {}, ["Кандидат для интервью"]),
+    el("select", {
+      class: "input",
+      value: candidate?.id || "",
+      onchange: event => {
+        state.interviewCandidateId = event.target.value;
+        render();
+      }
+    }, [
+      ...(state.submissions.length ? state.submissions.map(item => el("option", {
+        value: item.id,
+        selected: item.id === candidate?.id ? "selected" : null
+      }, [`${item.candidate.fullName || "Без имени"} · ${item.score?.total || 0}/100`])) : [
+        el("option", { value: "" }, ["Кандидатов пока нет"])
+      ])
+    ])
+  ]);
+}
+
+function interviewMetaFields(candidate, draft) {
+  return el("div", { class: "interview-meta-grid" }, [
+    el("label", { class: "named-input" }, [
+      el("span", {}, ["Кто проводит интервью"]),
+      el("input", {
+        class: "input",
+        value: draft.interviewer || "",
+        placeholder: "HR или руководитель",
+        oninput: event => setInterviewDraft(candidate, current => { current.interviewer = event.target.value; })
+      })
+    ]),
+    el("label", { class: "named-input" }, [
+      el("span", {}, ["Дата интервью"]),
+      el("input", {
+        class: "input",
+        type: "date",
+        value: draft.interviewDate || "",
+        oninput: event => setInterviewDraft(candidate, current => { current.interviewDate = event.target.value; })
+      })
+    ])
+  ]);
+}
+
+function interviewQuestionNotes(candidate, draft, interview) {
+  return el("section", { class: "interview-form-section" }, [
+    el("h3", {}, ["Заметки по проективным вопросам"]),
+    ...(interview.projectiveBlocks || []).map(block => el("details", { class: "interview-note-group" }, [
+      el("summary", {}, [block.title]),
+      ...(block.questions || []).map(question => {
+        const value = draft.scriptNotes?.[question.id] || {};
+        return el("div", { class: "interview-question-card" }, [
+          el("strong", {}, [question.text]),
+          question.goal ? el("span", {}, [question.goal]) : el("span"),
+          el("textarea", {
+            class: "input",
+            placeholder: "Ключевые ответы, факты, цитаты кандидата",
+            oninput: event => setInterviewDraft(candidate, current => {
+              current.scriptNotes = current.scriptNotes || {};
+              current.scriptNotes[question.id] = { ...(current.scriptNotes[question.id] || {}), notes: event.target.value };
+            })
+          }, [value.notes || ""]),
+          el("input", {
+            class: "input",
+            value: value.conclusion || "",
+            placeholder: "Короткий вывод по вопросу",
+            oninput: event => setInterviewDraft(candidate, current => {
+              current.scriptNotes = current.scriptNotes || {};
+              current.scriptNotes[question.id] = { ...(current.scriptNotes[question.id] || {}), conclusion: event.target.value };
+            })
+          })
+        ]);
+      })
+    ]))
+  ]);
+}
+
+function interviewScorecard(candidate, draft, interview) {
+  return el("section", { class: "interview-form-section" }, [
+    el("h3", {}, ["Оценка компетенций"]),
+    ...(interview.scorecard || []).map(item => {
+      const value = draft.scorecard?.[item.id] || {};
+      return el("div", { class: "scorecard-item" }, [
+        el("div", { class: "scorecard-head" }, [
+          el("div", {}, [
+            el("strong", {}, [item.title]),
+            el("p", {}, [item.description || ""])
+          ]),
+          ratingSelect(value.score, event => setInterviewDraft(candidate, current => {
+            current.scorecard = current.scorecard || {};
+            current.scorecard[item.id] = { ...(current.scorecard[item.id] || {}), score: Number(event.target.value || 0) };
+          }))
+        ]),
+        item.sources ? el("span", { class: "script-source" }, [`Источник проверки: ${item.sources}`]) : el("span"),
+        el("textarea", {
+          class: "input",
+          placeholder: "Факты, цитаты и наблюдения по этой компетенции",
+          oninput: event => setInterviewDraft(candidate, current => {
+            current.scorecard = current.scorecard || {};
+            current.scorecard[item.id] = { ...(current.scorecard[item.id] || {}), notes: event.target.value };
+          })
+        }, [value.notes || ""])
+      ]);
+    })
+  ]);
+}
+
+function interviewCaseNotes(candidate, draft, interview) {
+  return el("section", { class: "interview-form-section" }, [
+    el("h3", {}, ["Разбор кейсов"]),
+    ...(interview.cases || []).map(item => {
+      const value = draft.cases?.[item.id] || {};
+      return el("div", { class: "case-card" }, [
+        el("div", { class: "scorecard-head" }, [
+          el("div", {}, [
+            el("strong", {}, [item.title]),
+            el("p", {}, [item.situation || ""])
+          ]),
+          ratingSelect(value.score, event => setInterviewDraft(candidate, current => {
+            current.cases = current.cases || {};
+            current.cases[item.id] = { ...(current.cases[item.id] || {}), score: Number(event.target.value || 0) };
+          }))
+        ]),
+        el("ul", {}, (item.questions || []).map(text => el("li", {}, [text]))),
+        el("textarea", {
+          class: "input",
+          placeholder: "Ключевые решения и аргументы кандидата",
+          oninput: event => setInterviewDraft(candidate, current => {
+            current.cases = current.cases || {};
+            current.cases[item.id] = { ...(current.cases[item.id] || {}), decisions: event.target.value };
+          })
+        }, [value.decisions || ""]),
+        el("textarea", {
+          class: "input",
+          placeholder: "Сильные стороны в кейсе",
+          oninput: event => setInterviewDraft(candidate, current => {
+            current.cases = current.cases || {};
+            current.cases[item.id] = { ...(current.cases[item.id] || {}), strengths: event.target.value };
+          })
+        }, [value.strengths || ""]),
+        el("textarea", {
+          class: "input",
+          placeholder: "Риски / слабые места",
+          oninput: event => setInterviewDraft(candidate, current => {
+            current.cases = current.cases || {};
+            current.cases[item.id] = { ...(current.cases[item.id] || {}), risks: event.target.value };
+          })
+        }, [value.risks || ""])
+      ]);
+    })
+  ]);
+}
+
+function interviewDecisionFields(candidate, draft, interview) {
+  return el("section", { class: "interview-form-section" }, [
+    el("h3", {}, ["Итоги интервью"]),
+    ...(interview.decisionFields || []).map(field => {
+      const value = draft.decision?.[field.id] || "";
+      if (field.type === "select") {
+        return el("label", { class: "named-input" }, [
+          el("span", {}, [field.title]),
+          el("select", {
+            class: "input",
+            onchange: event => setInterviewDraft(candidate, current => {
+              current.decision = current.decision || {};
+              current.decision[field.id] = event.target.value;
+            })
+          }, [
+            el("option", { value: "" }, ["Не выбрано"]),
+            ...(field.options || []).map(option => el("option", { value: option, selected: value === option ? "selected" : null }, [option]))
+          ])
+        ]);
+      }
+      if (field.type === "text") {
+        return el("label", { class: "named-input" }, [
+          el("span", {}, [field.title]),
+          el("input", {
+            class: "input",
+            value,
+            oninput: event => setInterviewDraft(candidate, current => {
+              current.decision = current.decision || {};
+              current.decision[field.id] = event.target.value;
+            })
+          })
+        ]);
+      }
+      return el("label", { class: "named-input" }, [
+        el("span", {}, [field.title]),
+        el("textarea", {
+          class: "input",
+          oninput: event => setInterviewDraft(candidate, current => {
+            current.decision = current.decision || {};
+            current.decision[field.id] = event.target.value;
+          })
+        }, [value])
+      ]);
+    })
+  ]);
+}
+
+function interviewEvaluationPanel(candidate, draft) {
+  const evaluation = draft.evaluation || candidate?.interview?.evaluation;
+  return el("section", { class: "interview-form-section interview-result" }, [
+    el("h3", {}, ["AI-оценка интервью"]),
+    evaluation ? el("div", { class: "ai-box" }, [
+      el("span", { class: "mode" }, [evaluation.mode === "yandex" ? "YandexGPT" : evaluation.mode === "openai" ? "OpenAI" : "Локальная оценка"]),
+      answerLine("Балл интервью", `${evaluation.score || 0}/100`),
+      el("p", {}, [evaluation.summary || ""]),
+      ...(evaluation.strengths || []).map(text => el("p", {}, [`Сильная сторона: ${text}`])),
+      ...(evaluation.risks || []).map(text => el("p", { class: "risk-text" }, [`Риск: ${text}`])),
+      evaluation.recommendation ? el("p", {}, [`Решение: ${evaluation.recommendation}`]) : el("div"),
+      ...(evaluation.nextSteps || []).map(text => el("p", {}, [`Следующий шаг: ${text}`])),
+      ...(evaluation.interviewQuestionsToClarify || []).map(text => el("p", {}, [`Уточнить: ${text}`]))
+    ]) : el("p", { class: "muted" }, ["Заполните оценочный лист и запустите AI-оценку. Если AI недоступен, система посчитает локальную оценку по баллам 1-5."])
+  ]);
+}
+
+function interviewFormPanel(candidate, interview) {
+  if (!candidate) {
+    return el("section", { class: "interview-form panel-card" }, [
+      el("h2", {}, ["Оценочный лист"]),
+      el("div", { class: "empty" }, ["Пока нет кандидатов по этой вакансии. Когда появятся анкеты, здесь можно будет проводить интервью и сохранять оценки."])
+    ]);
+  }
+  const draft = interviewDraft(candidate);
+  return el("section", { class: "interview-form panel-card" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Оценочный лист"]),
+        el("span", {}, [`${candidate.candidate.fullName || "Без имени"} · анкета ${candidate.score?.total || 0}/100`])
+      ]),
+      el("div", { class: "top-actions" }, [
+        el("button", { class: "btn ghost", onclick: () => saveInterviewDraft(candidate) }, ["Сохранить"]),
+        el("button", { class: "btn primary", onclick: () => evaluateInterviewDraft(candidate) }, [iconEl("spark"), "Оценить ИИ"])
+      ])
+    ]),
+    interviewMetaFields(candidate, draft),
+    interviewScorecard(candidate, draft, interview),
+    interviewQuestionNotes(candidate, draft, interview),
+    interviewCaseNotes(candidate, draft, interview),
+    interviewDecisionFields(candidate, draft, interview),
+    interviewEvaluationPanel(candidate, draft)
+  ]);
+}
+
+function interviewWorkspaceView() {
+  const interview = currentInterviewConfig();
+  const candidate = interviewCandidate();
+  if (candidate && !state.interviewCandidateId) state.interviewCandidateId = candidate.id;
+  return el("section", { class: "interview-page" }, [
+    el("header", { class: "dash-header interview-hero" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("user"), `Вакансия: ${vacancyLabel(state.adminVacancyCode)}`]),
+        el("h1", {}, [interview.title || `Интервью: ${vacancyLabel(state.adminVacancyCode)}`]),
+        el("p", {}, [interview.subtitle || "Сценарий и оценочный лист для структурированного интервью."])
+      ]),
+      interviewCandidateSelector(candidate)
+    ]),
+    el("div", { class: "interview-layout" }, [
+      interviewScriptPanel(interview),
+      interviewFormPanel(candidate, interview)
+    ])
   ]);
 }
 
@@ -1146,51 +2308,744 @@ function analyticsDashboardView(analytics) {
   ]);
 }
 
-async function saveConfig() {
-  let parsed;
-  try {
-    parsed = JSON.parse(state.configText);
-  } catch {
-    showToast("JSON методологии содержит ошибку.");
-    return;
-  }
-  const response = await fetch("/api/admin/config", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ config: parsed })
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Не удалось сохранить методологию." }));
-    showToast(error.error || "Не удалось сохранить методологию.");
-    return;
-  }
-  const data = await response.json();
-  applyConfig(data.config);
-  state.configOpen = false;
-  showToast("Методология сохранена.");
+function toggleStaffVacancy(code, checked) {
+  const current = new Set(state.staffForm.vacancyAccess || []);
+  if (checked) current.add(code);
+  else current.delete(code);
+  state.staffForm.vacancyAccess = [...current];
   render();
 }
 
-function configPanel() {
-  return el("section", { class: "config-panel" }, [
-    el("div", { class: "panel-head" }, [
+async function createStaffUser() {
+  const payload = {
+    email: state.staffForm.email.trim(),
+    displayName: state.staffForm.displayName.trim(),
+    role: state.staffForm.role,
+    password: state.staffForm.password,
+    vacancyAccess: state.staffForm.role === "hiring_manager" ? state.staffForm.vacancyAccess : []
+  };
+  if (!payload.email || !payload.password) {
+    showToast("Укажите почту и пароль сотрудника.");
+    return;
+  }
+  if (payload.password.length < 8) {
+    showToast("Пароль должен быть не короче 8 символов.");
+    return;
+  }
+  if (payload.role === "hiring_manager" && payload.vacancyAccess.length === 0) {
+    showToast("Для руководителя-заказчика выберите хотя бы одну вакансию.");
+    return;
+  }
+  const response = await fetch("/api/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось добавить сотрудника." }));
+    showToast(error.error || "Не удалось добавить сотрудника.");
+    return;
+  }
+  state.staffForm = { email: "", displayName: "", role: "hr", password: "", vacancyAccess: [] };
+  await loadAdmin();
+  showToast("Сотрудник добавлен.");
+  render();
+}
+
+async function updateStaffPassword(user) {
+  const password = String(state.staffPasswordDrafts[user.id] || "").trim();
+  if (!password) {
+    showToast("Введите новый пароль для этой учетной записи.");
+    return;
+  }
+  if (password.length < 8) {
+    showToast("Пароль должен быть не короче 8 символов.");
+    return;
+  }
+  const response = await fetch(`/api/admin/users/${user.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сменить пароль." }));
+    showToast(error.error || "Не удалось сменить пароль.");
+    return;
+  }
+  state.staffPasswordDrafts[user.id] = "";
+  await loadAdmin();
+  showToast(`Пароль для ${user.email || user.username} обновлен.`);
+  render();
+}
+
+function staffManagementView() {
+  const vacancies = Object.entries(state.vacancies || {});
+  return el("section", { class: "staff-page" }, [
+    el("header", { class: "dash-header" }, [
       el("div", {}, [
-        el("h2", {}, ["Методология анкеты"]),
-        el("span", {}, ["Вопросы, варианты, баллы, лимиты и пороги хранятся в SQLite."])
-      ]),
-      el("div", { class: "top-actions" }, [
-        el("button", { class: "btn ghost", onclick: () => {
-          state.configText = JSON.stringify(state.config, null, 2);
-          render();
-        } }, ["Отменить"]),
-        el("button", { class: "btn primary", onclick: saveConfig }, ["Сохранить"])
+        el("div", { class: "badge" }, [iconEl("user"), "Личный кабинет владельца"]),
+        el("h1", {}, ["Сотрудники и доступы"]),
+        el("p", {}, ["Добавляйте сотрудников по почте и назначайте роль. Руководитель-заказчик видит только выбранные вакансии."])
       ])
     ]),
-    el("textarea", {
-      class: "config-editor",
-      spellcheck: "false",
-      oninput: event => { state.configText = event.target.value; }
-    }, [state.configText])
+    el("section", { class: "table-panel staff-form" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Создать учетную запись сотрудника"]),
+        el("span", {}, ["Для нового сотрудника задается отдельный логин и начальный пароль."])
+      ]),
+      el("p", { class: "muted staff-help" }, [
+        "Это не пароль владельца и не общий пароль админки. Введите почту сотрудника, выберите роль и задайте начальный пароль, который сотрудник будет использовать для входа."
+      ]),
+      el("div", { class: "staff-form-grid" }, [
+        el("label", { class: "named-input staff-field" }, [
+          el("span", {}, ["Логин сотрудника"]),
+          el("input", {
+            class: "input compact-input",
+            type: "email",
+            placeholder: "Например: hr@praktiki.pro",
+            value: state.staffForm.email,
+            oninput: event => { state.staffForm.email = event.target.value; }
+          }),
+          el("small", {}, ["Обычно это рабочая почта. Именно ее сотрудник вводит при входе."])
+        ]),
+        el("label", { class: "named-input staff-field" }, [
+          el("span", {}, ["Имя в списке сотрудников"]),
+          el("input", {
+            class: "input compact-input",
+            placeholder: "Например: HR или Иван Петров",
+            value: state.staffForm.displayName,
+            oninput: event => { state.staffForm.displayName = event.target.value; }
+          }),
+          el("small", {}, ["Это подпись для владельца в админке, не влияет на вход."])
+        ]),
+        el("label", { class: "named-input staff-field" }, [
+          el("span", {}, ["Роль и права доступа"]),
+          el("select", {
+            class: "input compact-input",
+            value: state.staffForm.role,
+            onchange: event => {
+              state.staffForm.role = event.target.value;
+              if (state.staffForm.role !== "hiring_manager") state.staffForm.vacancyAccess = [];
+              render();
+            }
+          }, [
+            el("option", { value: "hr", selected: state.staffForm.role === "hr" ? "selected" : null }, ["HR: все вакансии"]),
+            el("option", { value: "hiring_manager", selected: state.staffForm.role === "hiring_manager" ? "selected" : null }, ["Руководитель-заказчик: только выбранные вакансии"])
+          ]),
+          el("small", {}, ["HR видит все воронки. Руководителю ниже нужно выбрать конкретные вакансии."])
+        ]),
+        el("label", { class: "named-input staff-field" }, [
+          el("span", {}, ["Начальный пароль сотрудника"]),
+          el("input", {
+            class: "input compact-input",
+            type: "password",
+            placeholder: "Минимум 8 символов",
+            value: state.staffForm.password,
+            oninput: event => { state.staffForm.password = event.target.value; }
+          }),
+          el("small", {}, ["Этот пароль будет записан для новой учетной записи. После сохранения посмотреть его нельзя, можно только задать новый."])
+        ])
+      ]),
+      state.staffForm.role === "hiring_manager" ? el("div", { class: "staff-vacancy-access" }, [
+        el("strong", {}, ["Доступ к вакансиям"]),
+        ...vacancies.map(([code, vacancy]) => {
+          const checked = state.staffForm.vacancyAccess.includes(code);
+          return el("label", { class: `choice compact-choice ${checked ? "selected" : ""}` }, [
+            el("input", {
+              type: "checkbox",
+              checked: checked ? "checked" : null,
+              onchange: event => toggleStaffVacancy(code, event.target.checked)
+            }),
+            el("span", { html: checked ? icon("check") : "" }),
+            el("strong", {}, [vacancy.adminTitle || vacancy.title || code])
+          ]);
+        })
+      ]) : el("p", { class: "muted staff-help" }, ["Вы выбрали роль HR: этот сотрудник получит доступ к админкам по всем вакансиям и сможет работать с кандидатами во всех воронках."]),
+      el("button", { class: "btn primary", onclick: createStaffUser }, ["Добавить сотрудника"])
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Текущие учетные записи"]),
+        el("span", {}, [`Всего: ${state.adminUsers.length}`])
+      ]),
+      ...(state.adminUsers.length ? state.adminUsers.map(user => el("div", { class: "staff-account-row" }, [
+        el("div", {}, [
+          el("strong", {}, [user.displayName || user.email || user.username]),
+          el("span", {}, [`Логин для входа: ${user.email || user.username}`]),
+          user.role === "owner" ? el("span", {}, ["Это учетная запись владельца. У владельца полный доступ ко всем настройкам."]) : el("span", {}, ["Старый пароль не отображается из соображений безопасности."])
+        ]),
+        el("div", {}, [
+          el("strong", {}, [roleLabel(user.role)]),
+          el("span", {}, [
+            user.role === "owner"
+              ? "полный доступ владельца"
+              : user.role === "hr"
+                ? "доступ ко всем вакансиям"
+                : ((user.vacancyAccess || []).map(code => vacancyLabel(code)).join(", ") || "нет выбранных вакансий")
+          ])
+        ]),
+        el("div", {}, [
+          el("div", { class: `status-pill ${user.active ? "green" : "red"}` }, [user.active ? "активен" : "выключен"]),
+          el("span", {}, ["Статус доступа к админке"])
+        ]),
+        el("div", { class: "staff-password-reset" }, [
+          el("label", { class: "named-input staff-field" }, [
+            el("span", {}, ["Задать новый пароль"]),
+            el("input", {
+              class: "input compact-input",
+              type: "password",
+              placeholder: "Новый пароль",
+              value: state.staffPasswordDrafts[user.id] || "",
+              oninput: event => { state.staffPasswordDrafts[user.id] = event.target.value; }
+            }),
+            el("small", {}, ["Нажмите кнопку ниже, и этот пароль станет актуальным для выбранного логина."])
+          ]),
+          el("button", { class: "btn ghost", onclick: () => updateStaffPassword(user) }, ["Сменить пароль"])
+        ])
+      ])) : [el("div", { class: "empty" }, ["Пользователи еще не добавлены."])])
+    ])
+  ]);
+}
+
+function auditLogView() {
+  return el("section", { class: "audit-page" }, [
+    el("header", { class: "dash-header" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("list"), "Контроль"]),
+        el("h1", {}, ["Журнал действий"]),
+        el("p", {}, ["Здесь фиксируются входы, изменения сотрудников, удаление кандидатов, AI-анализ и оценка тестовых."])
+      ])
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Последние действия"]),
+        el("button", { class: "btn ghost", onclick: async () => { await loadAdmin(); render(); } }, ["Обновить"])
+      ]),
+      ...(state.auditLogs.length ? state.auditLogs.map(log => el("div", { class: "audit-row" }, [
+        el("div", {}, [
+          el("strong", {}, [auditActionLabel(log.action)]),
+          el("span", {}, [new Date(log.createdAt).toLocaleString("ru-RU")])
+        ]),
+        el("div", {}, [log.username || "система"]),
+        el("div", {}, [roleLabel(log.role)]),
+        el("div", {}, [log.vacancyCode ? vacancyLabel(log.vacancyCode) : "—"])
+      ])) : [el("div", { class: "empty" }, ["Журнал пока пуст."])])
+    ])
+  ]);
+}
+
+function auditActionLabel(action) {
+  const labels = {
+    "auth.login": "Вход в админку",
+    "auth.logout": "Выход",
+    "user.create": "Создание сотрудника",
+    "user.update": "Изменение сотрудника",
+    "submission.delete": "Удаление кандидата",
+    "test_assignment.evaluate": "Оценка тестового",
+    "test_assignment.manual_review": "Оценка руководителя",
+    "analytics.ai_insights": "AI-анализ потока",
+    "config.update": "Изменение методологии"
+  };
+  return labels[action] || action;
+}
+
+function vacancyOptions(selectedCode) {
+  return Object.entries(state.vacancies || {}).map(([code, vacancy]) => (
+    el("option", { value: code, selected: selectedCode === code ? "selected" : null }, [vacancy.adminTitle || vacancy.title || code])
+  ));
+}
+
+function recruitmentChannelLabel(channel) {
+  if (channel === "hh") return "HeadHunter";
+  if (channel === "telegram") return "Telegram-чаты";
+  return channel || "—";
+}
+
+function recruitmentChannelsText(channels = []) {
+  return channels.length ? channels.map(recruitmentChannelLabel).join(", ") : "каналы не выбраны";
+}
+
+function toggleRecruitmentChannel(form, channel) {
+  const current = Array.isArray(form.recruitmentChannels) ? form.recruitmentChannels : [];
+  form.recruitmentChannels = current.includes(channel)
+    ? current.filter(item => item !== channel)
+    : [...current, channel];
+  render();
+}
+
+function recruitmentChannelPicker(form) {
+  const selected = Array.isArray(form.recruitmentChannels) ? form.recruitmentChannels : [];
+  return el("div", { class: "channel-picker" }, [
+    el("span", { class: "channel-picker-title" }, ["Каналы подбора"]),
+    ...[
+      { id: "hh", title: "HeadHunter", note: "текст вакансии для проверки и публикации" },
+      { id: "telegram", title: "Telegram-чаты", note: "пост в чат и личное сообщение кандидату" }
+    ].map(channel => el("button", {
+      type: "button",
+      class: `channel-option ${selected.includes(channel.id) ? "selected" : ""}`,
+      onclick: () => toggleRecruitmentChannel(form, channel.id)
+    }, [
+      el("span", { class: "fake-check" }, [selected.includes(channel.id) ? "✓" : ""]),
+      el("strong", {}, [channel.title]),
+      el("em", {}, [channel.note])
+    ]))
+  ]);
+}
+
+async function createHiringRequestFromAdmin() {
+  const payload = { ...state.hiringRequestForm };
+  if (payload.requestType === "start_existing" && !payload.vacancyCode) return showToast("Выберите вакансию из справочника.");
+  if (!payload.title && !payload.vacancyCode) return showToast("Укажите название новой вакансии.");
+  const response = await fetch("/api/admin/hiring-requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось создать заявку." }));
+    return showToast(error.error || "Не удалось создать заявку.");
+  }
+  state.hiringRequestForm = { requestType: "start_existing", vacancyCode: "", title: "", reason: "", urgency: "normal", desiredStartDate: "", headcount: 1, responsibilities: "", expectedResult: "", budget: "", comment: "" };
+  await loadAdmin();
+  showToast("Заявка на подбор создана.");
+  render();
+}
+
+async function createOpeningFromAdmin() {
+  const payload = { ...state.openingForm };
+  if (!payload.vacancyCode) return showToast("Выберите вакансию.");
+  if (!payload.recruitmentChannels?.length) return showToast("Выберите хотя бы один канал подбора.");
+  const response = await fetch("/api/admin/vacancy-openings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось запустить подбор." }));
+    return showToast(error.error || "Не удалось запустить подбор.");
+  }
+  state.openingForm = { vacancyCode: "", reason: "", urgency: "normal", desiredStartDate: "", headcount: 1, recruitmentChannels: ["hh"] };
+  await loadAdmin();
+  showToast("Запуск подбора создан.");
+  render();
+}
+
+async function createHhTextForOpening(opening) {
+  const response = await fetch("/api/admin/hh-texts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vacancyCode: opening.vacancyCode, openingId: opening.id, title: opening.title })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось создать текст HeadHunter." }));
+    return showToast(error.error || "Не удалось создать текст HeadHunter.");
+  }
+  await loadAdmin();
+  showToast("Черновик текста HeadHunter создан.");
+  render();
+}
+
+async function createHhPublicationFromText(text) {
+  const response = await fetch("/api/admin/hh-publications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vacancyCode: text.vacancyCode, openingId: text.openingId, hhTextId: text.id, status: "manual_ready" })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось создать публикацию." }));
+    return showToast(error.error || "Не удалось создать публикацию.");
+  }
+  await loadAdmin();
+  showToast("Публикация HeadHunter создана как готовая к ручному размещению.");
+  render();
+}
+
+async function attachExistingHhVacancy() {
+  const form = state.hhExistingPublicationForm;
+  const vacancyCode = String(form.vacancyCode || "").trim();
+  const url = String(form.url || "").trim();
+  const hhVacancyId = String(form.hhVacancyId || extractHhVacancyId(url) || "").trim();
+  if (!vacancyCode) return showToast("Выберите вакансию на нашей платформе: SMM или Проджект.");
+  if (!hhVacancyId) return showToast("Вставьте ссылку на вакансию HeadHunter или ее ID.");
+  const response = await fetch("/api/admin/hh-publications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vacancyCode,
+      hhVacancyId,
+      url,
+      status: "published",
+      note: "Существующая вакансия HeadHunter подключена вручную"
+    })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось подцепить вакансию HeadHunter." }));
+    return showToast(error.error || "Не удалось подцепить вакансию HeadHunter.");
+  }
+  const data = await response.json();
+  state.hhExistingPublicationForm = { vacancyCode: "", url: "", hhVacancyId: "" };
+  await loadAdmin();
+  showToast("Вакансия HeadHunter подцеплена к нашей платформе.");
+  render();
+  if (data.publication?.id) await syncHhResponses(data.publication);
+}
+
+async function connectHeadHunter() {
+  const response = await fetch("/api/admin/hh/oauth-url");
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "HeadHunter API не настроен." }));
+    return showToast(error.error || "HeadHunter API не настроен.");
+  }
+  const data = await response.json();
+  location.href = data.url;
+}
+
+async function setupHhWebhook() {
+  const response = await fetch("/api/admin/hh/webhook/setup", { method: "POST" });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось настроить webhook HeadHunter." }));
+    return showToast(error.error || "Не удалось настроить webhook HeadHunter.");
+  }
+  await loadAdmin();
+  showToast("Webhook HeadHunter настроен.");
+  render();
+}
+
+async function syncHhResponses(publication) {
+  const response = await fetch(`/api/admin/hh/publications/${publication.id}/sync-responses`, { method: "POST" });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось синхронизировать отклики." }));
+    return showToast(error.error || "Не удалось синхронизировать отклики.");
+  }
+  const data = await response.json();
+  await loadAdmin();
+  showToast(`Отклики HeadHunter синхронизированы: ${data.responses?.length || 0}.`);
+  render();
+}
+
+async function updateHhPublicationFromAdmin(publication) {
+  const draft = state.hhPublicationDrafts[publication.id] || {};
+  const extractedId = extractHhVacancyId(draft.url ?? publication.url ?? "");
+  const hhVacancyId = String(draft.hhVacancyId || publication.hhVacancyId || extractedId || "").trim();
+  const response = await fetch(`/api/admin/hh-publications/${publication.id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hhVacancyId,
+      url: (draft.url ?? publication.url ?? "").trim(),
+      status: hhVacancyId ? "published" : publication.status
+    })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить публикацию HeadHunter." }));
+    return showToast(error.error || "Не удалось сохранить публикацию HeadHunter.");
+  }
+  await loadAdmin();
+  showToast("Публикация HeadHunter сохранена.");
+  render();
+}
+
+async function saveAndSyncHhResponses(publication) {
+  const draft = state.hhPublicationDrafts[publication.id] || {};
+  const hhVacancyId = String(draft.hhVacancyId || publication.hhVacancyId || extractHhVacancyId(draft.url ?? publication.url ?? "") || "").trim();
+  if (!hhVacancyId) return showToast("Сначала вставьте ссылку на вакансию HeadHunter или ее ID.");
+  await updateHhPublicationFromAdmin({ ...publication, hhVacancyId });
+  const saved = (state.hhPublications || []).find(item => item.id === publication.id) || { ...publication, hhVacancyId };
+  await syncHhResponses(saved);
+}
+
+async function sendQuestionnaireToHhResponse(responseItem) {
+  const response = await fetch(`/api/admin/hh/responses/${responseItem.id}/send-questionnaire`, { method: "POST" });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось отправить ссылку кандидату." }));
+    return showToast(error.error || "Не удалось отправить ссылку кандидату.");
+  }
+  await loadAdmin();
+  showToast("Ссылка на анкету отправлена кандидату.");
+  render();
+}
+
+function hiringStatusLabel(status) {
+  const labels = {
+    new: "Новая",
+    accepted: "Принята",
+    rejected: "Отклонена",
+    draft: "Черновик",
+    manual_ready: "Готова к ручной публикации",
+    publication_ready: "Готова к публикации",
+    published: "Опубликована",
+    closed: "Закрыта"
+  };
+  return labels[status] || status || "—";
+}
+
+function hiringDashboardView() {
+  const canCreateOpening = isHrOrOwner();
+  return el("section", { class: "staff-page" }, [
+    el("header", { class: "dash-header" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("filter"), "Старт воронки"]),
+        el("h1", {}, ["Подобрать сотрудника"]),
+        el("p", {}, ["Выберите готовую вакансию или запросите новую позицию, чтобы запустить воронку подбора."])
+      ])
+    ]),
+    el("section", { class: "table-panel staff-form" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Создать заявку на подбор"]), el("span", {}, ["Для готовой вакансии или запроса на новую роль."])]),
+      el("div", { class: "staff-form-grid" }, [
+        el("select", { class: "input compact-input", value: state.hiringRequestForm.requestType, onchange: event => { state.hiringRequestForm.requestType = event.target.value; render(); } }, [
+          el("option", { value: "start_existing", selected: state.hiringRequestForm.requestType === "start_existing" ? "selected" : null }, ["Запустить готовую вакансию"]),
+          el("option", { value: "new_vacancy", selected: state.hiringRequestForm.requestType === "new_vacancy" ? "selected" : null }, ["Запросить новую вакансию"])
+        ]),
+        state.hiringRequestForm.requestType === "start_existing"
+          ? el("select", { class: "input compact-input", value: state.hiringRequestForm.vacancyCode, onchange: event => { state.hiringRequestForm.vacancyCode = event.target.value; } }, [
+            el("option", { value: "" }, ["Выберите вакансию"]),
+            ...vacancyOptions(state.hiringRequestForm.vacancyCode)
+          ])
+          : el("input", { class: "input compact-input", placeholder: "Название новой вакансии", value: state.hiringRequestForm.title, oninput: event => { state.hiringRequestForm.title = event.target.value; } }),
+        el("input", { class: "input compact-input", placeholder: "Причина открытия", value: state.hiringRequestForm.reason, oninput: event => { state.hiringRequestForm.reason = event.target.value; } }),
+        el("input", { class: "input compact-input", type: "number", min: "1", placeholder: "Сколько человек", value: state.hiringRequestForm.headcount, oninput: event => { state.hiringRequestForm.headcount = event.target.value; } }),
+        el("input", { class: "input compact-input", placeholder: "Желаемая дата выхода", value: state.hiringRequestForm.desiredStartDate, oninput: event => { state.hiringRequestForm.desiredStartDate = event.target.value; } }),
+        el("input", { class: "input compact-input", placeholder: "Комментарий", value: state.hiringRequestForm.comment, oninput: event => { state.hiringRequestForm.comment = event.target.value; } })
+      ]),
+      el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
+    ]),
+    canCreateOpening ? el("section", { class: "table-panel staff-form" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Начать подбор по готовой вакансии"]), el("span", {}, ["Создает рабочую воронку по выбранной позиции."])]),
+      el("div", { class: "staff-form-grid" }, [
+        el("select", { class: "input compact-input", value: state.openingForm.vacancyCode, onchange: event => { state.openingForm.vacancyCode = event.target.value; } }, [
+          el("option", { value: "" }, ["Выберите вакансию"]),
+          ...vacancyOptions(state.openingForm.vacancyCode)
+        ]),
+        el("input", { class: "input compact-input", placeholder: "Причина открытия", value: state.openingForm.reason, oninput: event => { state.openingForm.reason = event.target.value; } }),
+        el("input", { class: "input compact-input", type: "number", min: "1", placeholder: "Сколько человек", value: state.openingForm.headcount, oninput: event => { state.openingForm.headcount = event.target.value; } }),
+        el("input", { class: "input compact-input", placeholder: "Желаемая дата выхода", value: state.openingForm.desiredStartDate, oninput: event => { state.openingForm.desiredStartDate = event.target.value; } })
+      ]),
+      recruitmentChannelPicker(state.openingForm),
+      el("button", { class: "btn primary", onclick: createOpeningFromAdmin }, ["Начать подбор"])
+    ]) : el("div"),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Заявки"]), el("span", {}, [`Всего: ${state.hiringRequests.length}`])]),
+      ...(state.hiringRequests.length ? state.hiringRequests.map(item => el("div", { class: "staff-row" }, [
+        el("div", {}, [el("strong", {}, [item.title]), el("span", {}, [item.vacancyCode ? vacancyLabel(item.vacancyCode) : "новая вакансия"])]),
+        el("div", {}, [hiringStatusLabel(item.status)]),
+        el("div", {}, [item.createdByUsername || "—"]),
+        el("div", {}, [new Date(item.createdAt).toLocaleString("ru-RU")])
+      ])) : [el("div", { class: "empty" }, ["Заявок пока нет."])])
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Активные подборы"]), el("span", {}, [`Всего: ${state.vacancyOpenings.length}`])]),
+      ...(state.vacancyOpenings.length ? state.vacancyOpenings.map(openingCard) : [el("div", { class: "empty" }, ["Активных подборов пока нет."])])
+    ])
+  ]);
+}
+
+function openingCard(item) {
+  const channels = item.payload?.recruitmentChannels || [];
+  const telegramDrafts = item.payload?.telegramDrafts || null;
+  return el("div", { class: "opening-card" }, [
+    el("div", { class: "opening-card-head" }, [
+      el("div", {}, [
+        el("strong", {}, [item.title]),
+        el("span", {}, [vacancyLabel(item.vacancyCode)]),
+        el("span", {}, [`Каналы: ${recruitmentChannelsText(channels)}`])
+      ]),
+      el("div", { class: "opening-card-status" }, [
+        el("span", { class: "status-chip" }, [hiringStatusLabel(item.status)]),
+        item.reason ? el("em", {}, [item.reason]) : el("em")
+      ])
+    ]),
+    channels.includes("hh") ? el("div", { class: "opening-channel-block" }, [
+      el("h3", {}, ["HeadHunter"]),
+      item.hhTextId
+        ? el("p", {}, ["Текст вакансии для HH создан и доступен в разделе HeadHunter."])
+        : el("p", {}, ["Текст вакансии для HH еще не создан."]),
+      isHrOrOwner() && !item.hhTextId ? el("button", { class: "btn ghost", onclick: () => createHhTextForOpening(item) }, ["Создать текст HeadHunter"]) : el("div")
+    ]) : el("div"),
+    channels.includes("telegram") && telegramDrafts ? el("div", { class: "opening-channel-block" }, [
+      el("h3", {}, ["Telegram-чаты"]),
+      el("div", { class: "telegram-draft-grid" }, [
+        telegramDraftCard("Пост в профильный чат", telegramDrafts.chatPost, "Пост для Telegram скопирован."),
+        telegramDraftCard("Личное сообщение кандидату", telegramDrafts.directMessage, "Личное сообщение скопировано.")
+      ])
+    ]) : el("div")
+  ]);
+}
+
+function telegramDraftCard(title, text, toast) {
+  return el("div", { class: "telegram-draft-card" }, [
+    el("div", { class: "panel-head" }, [
+      el("h4", {}, [title]),
+      el("button", { class: "btn ghost", onclick: () => copyToClipboard(text || "", toast) }, [iconEl("copy"), "Копировать"])
+    ]),
+    el("pre", {}, [String(text || "").slice(0, 900)])
+  ]);
+}
+
+function headHunterDashboardView() {
+  const status = state.hhStatus || { configured: false, account: { connected: false } };
+  const connected = Boolean(status.account?.connected);
+  const isEmployerAccount = status.account?.me?.is_employer === true || status.account?.me?.auth_type === "employer";
+  return el("section", { class: "staff-page" }, [
+    el("header", { class: "dash-header" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("copy"), "HeadHunter"]),
+        el("h1", {}, ["Тексты и публикации"]),
+        el("p", {}, ["Здесь готовим текст вакансии, связываем публикацию на HH с нашей воронкой, загружаем отклики и отправляем кандидатам ссылку на анкету."])
+      ]),
+      isHrOrOwner() ? el("button", { class: "btn primary", onclick: connectHeadHunter }, [
+        connected ? "Переподключить HeadHunter" : "Подключить HeadHunter"
+      ]) : el("div")
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Статус подключения"]),
+        el("span", {}, [status.configured ? "настройки приложения заданы" : "не заданы HH_CLIENT_ID / HH_CLIENT_SECRET"])
+      ]),
+      el("div", { class: "staff-row" }, [
+        el("div", {}, [
+          el("strong", {}, [connected ? (isEmployerAccount ? "HeadHunter подключен как работодатель" : "HeadHunter подключен не тем типом аккаунта") : "HeadHunter не подключен"]),
+          el("span", {}, [status.account?.me?.email || status.account?.me?.first_name || "нет данных аккаунта"])
+        ]),
+        el("div", {}, [status.account?.me?.auth_type || status.account?.status || "disconnected"]),
+        el("div", {}, [status.redirectUri || "redirect URI не задан"]),
+        el("div", {}, [status.userAgent || "user-agent не задан"])
+      ]),
+      connected && !isEmployerAccount ? el("div", { class: "empty danger-note" }, [
+        "Сейчас подключен аккаунт соискателя. Для откликов, сообщений и webhook нужно нажать “Переподключить HeadHunter” и авторизоваться именно под работодателем/менеджером вакансий."
+      ]) : el("div"),
+      el("div", { class: "staff-row" }, [
+        el("div", {}, [
+          el("strong", {}, [status.webhook?.configured ? "Webhook HH настроен" : "Webhook HH не настроен"]),
+          el("span", {}, [status.webhook?.subscriptionId ? `Подписка: ${status.webhook.subscriptionId}` : "события от HH пока не приходят автоматически"])
+        ]),
+        el("div", {}, [status.webhookConfigured ? "endpoint готов" : "не задан HH_WEBHOOK_SECRET"]),
+        el("div", {}, [status.webhook?.actions?.join(", ") || "NEW_NEGOTIATION_VACANCY"]),
+        isHrOrOwner() ? el("button", { class: "btn ghost", onclick: setupHhWebhook }, [
+          status.webhook?.configured ? "Обновить webhook" : "Настроить webhook"
+        ]) : el("div")
+      ]),
+      el("div", { class: "empty" }, [
+        connected
+          ? "Следующий шаг: вставьте ссылку на опубликованную вакансию HH в публикации ниже и нажмите “Синхронизировать отклики”."
+          : "Следующий шаг: нажмите “Подключить HeadHunter”, авторизуйтесь в кабинете работодателя и вернитесь в этот раздел."
+      ])
+    ]),
+    el("section", { class: "table-panel staff-form" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Подцепить существующую вакансию HH"]),
+        el("span", {}, ["Для вакансий, которые уже созданы на HeadHunter вручную."])
+      ]),
+      el("div", { class: "staff-form-grid" }, [
+        el("label", { class: "named-input" }, [
+          el("span", {}, ["Вакансия на нашей платформе"]),
+          el("select", {
+            class: "input compact-input",
+            value: state.hhExistingPublicationForm.vacancyCode,
+            onchange: event => {
+              state.hhExistingPublicationForm.vacancyCode = event.target.value;
+            }
+          }, [
+            el("option", { value: "" }, ["Выберите вакансию"]),
+            ...vacancyOptions(state.hhExistingPublicationForm.vacancyCode)
+          ])
+        ]),
+        el("label", { class: "named-input" }, [
+          el("span", {}, ["Ссылка на вакансию HeadHunter"]),
+          el("input", {
+            class: "input compact-input",
+            value: state.hhExistingPublicationForm.url,
+            placeholder: "https://hh.ru/vacancy/123456789",
+            oninput: event => {
+              const nextUrl = event.target.value;
+              state.hhExistingPublicationForm.url = nextUrl;
+              const extractedId = extractHhVacancyId(nextUrl);
+              if (extractedId) state.hhExistingPublicationForm.hhVacancyId = extractedId;
+              render();
+            }
+          })
+        ]),
+        el("label", { class: "named-input" }, [
+          el("span", {}, ["ID вакансии HeadHunter"]),
+          el("input", {
+            class: "input compact-input",
+            value: state.hhExistingPublicationForm.hhVacancyId,
+            placeholder: "Заполнится из ссылки автоматически",
+            oninput: event => {
+              state.hhExistingPublicationForm.hhVacancyId = event.target.value;
+            }
+          })
+        ])
+      ]),
+      isHrOrOwner() ? el("button", { class: "btn primary", onclick: attachExistingHhVacancy }, [
+        "Подцепить вакансию и загрузить отклики"
+      ]) : el("div")
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Тексты HeadHunter"]), el("span", {}, [`Всего: ${state.hhTexts.length}`])]),
+      ...(state.hhTexts.length ? state.hhTexts.map(text => el("div", { class: "hh-text-row" }, [
+        el("div", {}, [el("strong", {}, [text.title]), el("span", {}, [vacancyLabel(text.vacancyCode)])]),
+        el("pre", {}, [text.body.slice(0, 900)]),
+        el("button", { class: "btn ghost", onclick: () => copyToClipboard(text.body, "Текст вакансии скопирован.") }, [iconEl("copy"), "Копировать текст"]),
+        isHrOrOwner() ? el("button", { class: "btn primary", onclick: () => createHhPublicationFromText(text) }, ["Создать публикацию"]) : el("div")
+      ])) : [el("div", { class: "empty" }, ["Тексты еще не созданы. Создайте их из раздела “Подобрать сотрудника”."])])
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Публикации"]), el("span", {}, [`Всего: ${state.hhPublications.length}`])]),
+      ...(state.hhPublications.length ? state.hhPublications.map(pub => {
+        const draft = state.hhPublicationDrafts[pub.id] || {};
+        const hhVacancyId = draft.hhVacancyId ?? pub.hhVacancyId ?? "";
+        const url = draft.url ?? pub.url ?? "";
+        return el("div", { class: "hh-publication-row" }, [
+          el("div", {}, [
+            el("strong", {}, [vacancyLabel(pub.vacancyCode)]),
+            el("span", {}, [`Статус: ${hiringStatusLabel(pub.status)}`]),
+            el("span", {}, [`Создана: ${new Date(pub.createdAt).toLocaleString("ru-RU")}`])
+          ]),
+          el("label", { class: "named-input" }, [
+            el("span", {}, ["ID вакансии HeadHunter"]),
+            el("input", {
+              class: "input compact-input",
+              value: hhVacancyId,
+              placeholder: "Например: 123456789",
+              oninput: event => {
+                state.hhPublicationDrafts[pub.id] = { ...(state.hhPublicationDrafts[pub.id] || {}), hhVacancyId: event.target.value };
+              }
+            })
+          ]),
+          el("label", { class: "named-input" }, [
+            el("span", {}, ["Ссылка на вакансию HeadHunter"]),
+            el("input", {
+              class: "input compact-input",
+              value: url,
+              placeholder: "https://hh.ru/vacancy/...",
+              oninput: event => {
+                const nextUrl = event.target.value;
+                const extractedId = extractHhVacancyId(nextUrl);
+                state.hhPublicationDrafts[pub.id] = {
+                  ...(state.hhPublicationDrafts[pub.id] || {}),
+                  url: nextUrl,
+                  ...(extractedId ? { hhVacancyId: extractedId } : {})
+                };
+                render();
+              }
+            })
+          ]),
+          el("div", { class: "hh-publication-actions" }, [
+            isHrOrOwner() ? el("button", { class: "btn primary", onclick: () => updateHhPublicationFromAdmin(pub) }, ["Сохранить"]) : el("div"),
+            hhVacancyId || extractHhVacancyId(url) ? el("button", { class: "btn ghost", onclick: () => saveAndSyncHhResponses(pub) }, ["Синхронизировать отклики"]) : el("span", {}, ["Вставьте ссылку на вакансию HH, чтобы загрузить отклики"])
+          ])
+        ]);
+      }) : [el("div", { class: "empty" }, ["Публикаций пока нет."])])
+    ]),
+    el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Отклики HeadHunter"]), el("span", {}, [`Всего: ${state.hhResponses.length}`])]),
+      ...(state.hhResponses.length ? state.hhResponses.map(item => el("div", { class: "staff-row" }, [
+        el("div", {}, [el("strong", {}, [item.candidateName || "Кандидат HeadHunter"]), el("span", {}, [item.resumeUrl || item.resumeId || "резюме без ссылки"])]),
+        el("div", {}, [vacancyLabel(item.vacancyCode)]),
+        el("div", {}, [item.questionnaireSent ? `анкета отправлена ${new Date(item.questionnaireSentAt).toLocaleString("ru-RU")}` : "анкета не отправлена"]),
+        item.questionnaireSent ? el("div") : el("button", { class: "btn primary", onclick: () => sendQuestionnaireToHhResponse(item) }, ["Отправить анкету"])
+      ])) : [el("div", { class: "empty" }, ["Откликов пока нет. После указания ID вакансии HeadHunter синхронизируйте публикацию."])])
+    ])
   ]);
 }
 
@@ -1199,30 +3054,27 @@ function adminView() {
   ensureAdminLoaded();
   const analytics = state.analytics || { total: 0, avgScore: 0, statusCounts: {}, recommendations: [], topProjectTypes: [], topTools: [], topMetrics: [], summary: "" };
   const selected = state.selected;
-  return el("main", { class: "admin-shell" }, [
-    el("nav", { class: "topbar" }, [
-      el("a", { class: "brand", href: "#candidate" }, [iconEl("chart"), "HR Screening"]),
-      el("div", { class: "top-actions" }, [
-        adminNavButton("candidates", "Кандидаты", "list"),
-        adminNavButton("analytics", "Аналитика", "chart"),
-        el("button", { class: "btn ghost", onclick: async () => { await loadAdmin(); render(); } }, ["Обновить"]),
-        el("button", { class: "btn ghost", onclick: () => { state.configOpen = !state.configOpen; render(); } }, ["Методология"]),
-        el("button", { class: "btn danger", onclick: async () => {
-          await fetch("/api/auth/logout", { method: "POST" });
-          localStorage.removeItem(ADMIN_USER_KEY);
-          state.user = null;
-          state.analytics = null;
-          render();
-        } }, ["Выйти"])
-      ])
-    ]),
-    state.configOpen ? configPanel() : el("div"),
-    state.adminSection === "analytics" ? analyticsDashboardView(analytics) : el("section", { class: "dashboard-grid" }, [
+  const currentVacancyTitle = vacancyLabel(state.adminVacancyCode);
+  const mainContent = state.adminSection === "overview"
+    ? adminOverviewView()
+    : state.adminSection === "staff" && isOwner()
+    ? staffManagementView()
+    : state.adminSection === "audit" && isOwner()
+      ? auditLogView()
+      : state.adminSection === "hiring"
+        ? hiringDashboardView()
+        : state.adminSection === "hh"
+          ? headHunterDashboardView()
+      : state.adminSection === "interview"
+        ? interviewWorkspaceView()
+      : state.adminSection === "analytics"
+        ? analyticsDashboardView(analytics)
+        : el("section", { class: "dashboard-grid" }, [
       el("div", { class: "dashboard-main" }, [
         el("header", { class: "dash-header" }, [
           el("div", {}, [
-            el("div", { class: "badge" }, [iconEl("filter"), "Воронка подбора"]),
-            el("h1", {}, ["Дашборд кандидатов"]),
+            el("div", { class: "badge" }, [iconEl("filter"), `Воронка: ${currentVacancyTitle}`]),
+            el("h1", {}, [state.adminSection === "vacancies" ? `Вакансия: ${currentVacancyTitle}` : "Дашборд кандидатов"]),
             el("p", {}, [analytics.summary || "Загрузка..."])
           ]),
           el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "AI-анализ потока"])
@@ -1234,9 +3086,11 @@ function adminView() {
           kpi("Yellow", analytics.statusCounts.yellow || 0, "yellow")
         ]),
         statusBar(analytics),
+        vacancyMetricsDashboard(analytics),
+        adminQuestionnaireLinksPanel(),
         el("section", { class: "table-panel" }, [
           el("div", { class: "panel-head" }, [el("h2", {}, ["Кандидаты"]), el("span", {}, ["Нажмите на строку, чтобы открыть профиль"])]),
-          ...(state.submissions.length ? state.submissions.map(candidateRow) : [el("div", { class: "empty" }, ["Пока нет заполненных анкет. Отправьте кандидату ссылку на главную страницу."])])
+          ...(state.submissions.length ? state.submissions.map(candidateRow) : [el("div", { class: "empty" }, [`Пока нет заполненных анкет по вакансии "${currentVacancyTitle}". Скопируйте ссылку выше и отправьте ее кандидату.`])])
         ])
       ]),
       el("aside", { class: "dashboard-side" }, [
@@ -1254,6 +3108,24 @@ function adminView() {
         analyticsList("Инструменты", analytics.topTools || [], "tools"),
         analyticsList("Метрики", analytics.topMetrics || [], "metrics")
       ])
+    ]);
+  return el("main", { class: "admin-shell" }, [
+    el("nav", { class: "topbar" }, [
+      el("a", { class: "brand", href: "#candidate" }, [iconEl("chart"), "HR Screening"]),
+      el("div", { class: "top-actions" }, [
+        el("button", { class: "btn ghost", onclick: async () => { await loadAdmin(); render(); } }, ["Обновить"]),
+        el("button", { class: "btn danger", onclick: async () => {
+          await fetch("/api/auth/logout", { method: "POST" });
+          localStorage.removeItem(ADMIN_USER_KEY);
+          state.user = null;
+          state.analytics = null;
+          render();
+        } }, ["Выйти"])
+      ])
+    ]),
+    el("div", { class: "admin-layout" }, [
+      adminSidebar(),
+      el("div", { class: "admin-content" }, [mainContent])
     ]),
     selected ? profileDrawer(selected) : el("div")
   ]);
@@ -1263,7 +3135,160 @@ function answerLine(title, value) {
   return el("div", { class: "answer-line" }, [el("span", {}, [title]), el("strong", {}, [value || "—"])]);
 }
 
+function answerLinkLine(title, href, label) {
+  if (!href) return answerLine(title, "—");
+  return el("div", { class: "answer-line" }, [
+    el("span", {}, [title]),
+    el("a", { href, target: "_blank", rel: "noopener", class: "answer-download" }, [label || href])
+  ]);
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function testAssignmentDeadlineInfo(testAssignment = {}) {
+  if (!testAssignment?.eligible) return null;
+  const issuedAt = testAssignment.issuedAt || null;
+  const submittedAt = testAssignment.submittedAt || null;
+  const deadlineMs = 48 * 60 * 60 * 1000;
+  const issuedDate = issuedAt ? new Date(issuedAt) : null;
+  const submittedDate = submittedAt ? new Date(submittedAt) : null;
+  const deadlineDate = issuedDate && !Number.isNaN(issuedDate.getTime())
+    ? new Date(issuedDate.getTime() + deadlineMs)
+    : null;
+  const isSubmitted = submittedDate && !Number.isNaN(submittedDate.getTime());
+  const isOverdue = Boolean(deadlineDate && !isSubmitted && Date.now() > deadlineDate.getTime());
+  return {
+    assignedAt: testAssignment.assignedAt || null,
+    issuedAt,
+    deadlineAt: deadlineDate ? deadlineDate.toISOString() : null,
+    submittedAt,
+    isSubmitted,
+    isOverdue
+  };
+}
+
+function testAssignmentTimeline(testAssignment = {}) {
+  const info = testAssignmentDeadlineInfo(testAssignment);
+  if (!info) return el("div");
+  const statusText = info.isSubmitted
+    ? "Тестовое выполнено: кандидат прикрепил ссылку с результатом."
+    : info.isOverdue
+      ? "Срок выполнения тестового задания истек."
+      : info.issuedAt
+        ? "Ждем ссылку на результат тестового задания."
+        : "Тестовое назначено, но кандидат еще не открыл страницу задания.";
+  return el("div", { class: `test-timeline ${info.isOverdue ? "overdue" : info.isSubmitted ? "submitted" : ""}` }, [
+    el("div", { class: "test-timeline-head" }, [
+      el("strong", {}, ["Срок выполнения"]),
+      el("span", {}, ["48 часов с момента выдачи"])
+    ]),
+    answerLine("Назначено", formatDateTime(info.assignedAt)),
+    answerLine("Выдано кандидату", info.issuedAt ? formatDateTime(info.issuedAt) : "страница задания еще не открыта"),
+    answerLine("Дедлайн", info.deadlineAt ? formatDateTime(info.deadlineAt) : "появится после открытия задания"),
+    answerLine("Результат прикреплен", info.submittedAt ? formatDateTime(info.submittedAt) : "ссылка еще не прикреплена"),
+    el("p", { class: "test-timeline-status" }, [statusText])
+  ]);
+}
+
+function communicationStatusText(status) {
+  const labels = {
+    pending: "ожидает отправки",
+    sent: "отправлено",
+    received: "получено",
+    failed: "ошибка отправки",
+    skipped: "пропущено"
+  };
+  return labels[status] || status || "—";
+}
+
+function communicationEventText(eventType) {
+  const labels = {
+    questionnaire_completed: "анкета получена",
+    test_assignment_invite: "приглашение к тестовому",
+    test_assignment_received: "тестовое получено",
+    telegram_deep_link_linked: "Telegram привязан",
+    telegram_link_confirmation_sent: "подтверждение в Telegram"
+  };
+  return labels[eventType] || eventType || "—";
+}
+
+function communicationChannelText(channel) {
+  if (channel === "email") return "Email";
+  if (channel === "telegram") return "Telegram";
+  return channel || "—";
+}
+
+function communicationsSection(item) {
+  const communications = Array.isArray(item.communications) ? item.communications : [];
+  return el("section", { class: "profile-section" }, [
+    el("h3", {}, ["Журнал коммуникаций"]),
+    communications.length
+      ? el("div", { class: "communication-list" }, communications.map(entry => el("div", { class: `communication-item ${entry.status || ""}` }, [
+        el("div", { class: "communication-main" }, [
+          el("strong", {}, [communicationEventText(entry.eventType)]),
+          el("span", {}, [entry.subject || "Без темы"])
+        ]),
+        answerLine("Дата", entry.createdAt ? new Date(entry.createdAt).toLocaleString("ru-RU") : "—"),
+        answerLine("Канал", communicationChannelText(entry.channel)),
+        answerLine("Получатель", entry.recipient || "—"),
+        answerLine("Статус", communicationStatusText(entry.status)),
+        entry.error ? answerLine("Ошибка", entry.error) : el("div")
+      ])))
+      : el("p", { class: "muted" }, ["Коммуникаций по кандидату пока нет."])
+  ]);
+}
+
+function telegramProfileSection(item) {
+  const link = item.telegramLink || null;
+  const name = link?.username ? `@${link.username}` : [link?.firstName, link?.lastName].filter(Boolean).join(" ");
+  return el("section", { class: "profile-section" }, [
+    el("h3", {}, ["Telegram"]),
+    link
+      ? el("div", {}, [
+        answerLine("Статус", "привязан"),
+        answerLine("Контакт", name || link.chatId || "—"),
+        answerLine("Привязан", link.updatedAt ? new Date(link.updatedAt).toLocaleString("ru-RU") : "—")
+      ])
+      : el("p", { class: "muted" }, ["Кандидат еще не привязал Telegram-бота."])
+  ]);
+}
+
+function formatFileSize(size) {
+  const bytes = Number(size || 0);
+  if (!bytes) return "";
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+  return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+}
+
+function formatQuestionAnswer(q, answers) {
+  const value = answers?.[q.id];
+  if (q.type === "resumeAttachment") {
+    const file = answers?.resumeFile;
+    const parts = [];
+    if (value) parts.push(`ссылка: ${value}`);
+    if (file?.originalName) parts.push(`файл: ${file.originalName}`);
+    return parts.join("; ") || "—";
+  }
+  if (q.type === "questionRating") return value ? `${value} из 5` : "—";
+  if (Array.isArray(value)) return selectedText(q.id, value);
+  return selectedText(q.id, value);
+}
+
 function profileDrawer(item) {
+  const answerRows = (state.config?.questions || []).filter(q => !["namePair", "contactPair", "expectations"].includes(q.type)).map(q => {
+    return answerLine(q.title, formatQuestionAnswer(q, item.answers));
+  });
   return el("div", { class: "drawer-backdrop", onclick: event => { if (event.target.className === "drawer-backdrop") { state.selected = null; render(); } } }, [
     el("aside", { class: "drawer" }, [
       el("button", { class: "close-btn", onclick: () => { state.selected = null; render(); } }, ["×"]),
@@ -1272,6 +3297,7 @@ function profileDrawer(item) {
         el("div", {}, [
           el("h2", {}, [item.candidate.fullName || "Без имени"]),
           el("p", {}, [item.candidate.contacts || "Контакты не указаны"]),
+          el("p", {}, [`Вакансия: ${vacancyLabel(item.vacancyCode || state.adminVacancyCode)}`]),
           el("div", { class: `status-pill ${item.recommendation.code}` }, [`${item.recommendation.label} — ${item.recommendation.status}`])
         ])
       ]),
@@ -1284,6 +3310,7 @@ function profileDrawer(item) {
         el("ul", {}, item.risks.map(text => el("li", {}, [text]))),
         item.flags.length ? el("div", { class: "flags" }, item.flags.map(flag => el("span", { class: flag.severity }, [flag.title]))) : el("div", { class: "flags ok" }, ["Стоп-факторы не найдены"])
       ]),
+      funnelReviewSection(item),
       el("section", { class: "profile-section" }, [
         el("h3", {}, ["Баллы по блокам"]),
         ...Object.entries(item.score.blocks).map(([key, value]) => answerLine(blockName(key), String(value)))
@@ -1297,27 +3324,119 @@ function profileDrawer(item) {
       ]),
       el("section", { class: "profile-section" }, [
         el("h3", {}, ["Тестовое задание"]),
-        answerLine("Выдано", item.testAssignment?.eligible ? "да" : "нет"),
+        answerLine("Назначение", item.testAssignment?.eligible ? "Тестовое назначено кандидату" : "Тестовое не назначалось"),
         answerLine("Статус", testAssignmentStatus(item.testAssignment)),
+        testAssignmentTimeline(item.testAssignment),
         item.testAssignment?.link
-          ? answerLine("Ссылка", item.testAssignment.link)
-          : answerLine("Ссылка", "не отправлена")
+          ? answerLinkLine("Результат кандидата", item.testAssignment.link, "Открыть Google Документ")
+          : answerLine("Результат кандидата", "кандидат еще не прикрепил ссылку"),
+        testAssignmentEvaluationBlock(item)
       ]),
+      telegramProfileSection(item),
+      communicationsSection(item),
       el("section", { class: "profile-section" }, [
         el("h3", {}, ["Ответы"]),
-        answerLine("Портфолио", item.candidate.portfolio),
-        answerLine("Опыт", selectedText("experienceYears", item.answers.experienceYears)),
-        answerLine("Проекты", selectedText("projectTypes", item.answers.projectTypes)),
-        answerLine("Соцсети", selectedText("socialNetworks", item.answers.socialNetworks)),
-        answerLine("Ответственность", selectedText("responsibilities", item.answers.responsibilities)),
-        answerLine("Готов делать", selectedText("readiness", item.answers.readiness)),
-        answerLine("Инструменты", selectedText("tools", item.answers.tools)),
-        answerLine("Метрики", selectedText("metrics", item.answers.metrics)),
-        answerLine("Формат", selectedText("workFormat", item.candidate.workFormat)),
-        answerLine("Доход", item.candidate.income),
-        answerLine("Выход", selectedText("availability", item.candidate.availability)),
-        answerLine("Мини-кейс", item.answers.contentCase),
-        answerLine("Новое в SMM", item.answers.innovation)
+        ...answerRows,
+        item.answers?.resumeFile?.url
+          ? answerLinkLine("Файл резюме", item.answers.resumeFile.url, item.answers.resumeFile.originalName || "Скачать резюме")
+          : el("div")
+      ])
+    ])
+  ]);
+}
+
+function funnelReviewSection(item) {
+  const review = item.funnelReview;
+  if (!review) return el("div");
+  const rec = review.recommendation || {};
+  const testReview = review.testReview || {};
+  return el("section", { class: "profile-section funnel-review" }, [
+    el("h3", {}, ["Суммарная рекомендация по воронке"]),
+    answerLine("Оценка анкеты", `${review.questionnaireScore}/100`),
+    answerLine("Оценка тестового", review.testScore === null ? "тестовое еще не оценено" : `${review.testScore}/100`),
+    testReview.formula ? answerLine("Формула тестового", testReview.formula) : el("div"),
+    testReview.comparisonLabel ? answerLine("Сравнение оценок", testReview.difference === null ? testReview.comparisonLabel : `${testReview.comparisonLabel}; разница ${testReview.difference} баллов`) : el("div"),
+    review.interviewScore === null ? el("div") : answerLine("Оценка интервью", `${review.interviewScore}/100`),
+    answerLine("Итоговая оценка", `${review.totalScore}/100`),
+    answerLine("Формула", review.formula),
+    el("div", { class: `status-pill ${rec.code || "yellow"}` }, [rec.label || "Ручной разбор"]),
+    el("p", {}, [rec.action || ""])
+  ]);
+}
+
+function testAssignmentEvaluationBlock(item) {
+  const test = item.testAssignment || {};
+  const evaluation = test.evaluation;
+  const manualReview = test.manualReview;
+  const review = item.funnelReview?.testReview || {};
+  const canEvaluate = isHrOrOwner() && test.link && ["submitted", "manual_reviewed", "evaluated"].includes(test.status);
+  const canManualReview = canReviewTestAssignment() && test.link;
+  const draft = testManualDraft(item);
+  return el("div", { class: "test-evaluation-panel" }, [
+    el("h3", {}, ["Оценка тестового задания"]),
+    review.finalScore !== null && review.finalScore !== undefined ? el("div", { class: `test-score-summary ${review.comparisonStatus || ""}` }, [
+      el("strong", {}, [`Итог тестового: ${review.finalScore}/100`]),
+      el("span", {}, [review.formula || ""]),
+      review.comparisonLabel ? el("em", {}, [review.difference === null ? review.comparisonLabel : `${review.comparisonLabel}. Разница: ${review.difference} баллов.`]) : el("em")
+    ]) : el("p", { class: "muted" }, ["Ждем оценку тестового. Нужна ручная оценка руководителя и желательно AI-анализ."]),
+    el("div", { class: "test-review-grid" }, [
+      el("section", { class: "test-review-card" }, [
+        el("h4", {}, ["Оценка руководителя"]),
+        manualReview ? el("div", { class: "ai-box compact" }, [
+          answerLine("Балл", `${manualReview.score}/100`),
+          answerLine("Решение", manualReview.decision || "—"),
+          manualReview.comment ? el("p", {}, [manualReview.comment]) : el("p", { class: "muted" }, ["Комментарий не указан."]),
+          answerLine("Кто оценил", manualReview.reviewer || manualReview.reviewerUsername || "—")
+        ]) : el("p", { class: "muted" }, ["Руководитель еще не поставил оценку."]),
+        canManualReview ? el("div", { class: "manual-review-form" }, [
+          el("label", { class: "named-input" }, [
+            el("span", {}, ["Балл руководителя, 0-100"]),
+            el("input", {
+              class: "input compact-input",
+              type: "number",
+              min: "0",
+              max: "100",
+              value: draft.score,
+              placeholder: "Например: 82",
+              oninput: event => { draft.score = event.target.value; }
+            })
+          ]),
+          el("label", { class: "named-input" }, [
+            el("span", {}, ["Решение"]),
+            el("select", {
+              class: "input compact-input",
+              onchange: event => { draft.decision = event.target.value; }
+            }, [
+              el("option", { value: "", selected: !draft.decision ? "selected" : null }, ["Не выбрано"]),
+              ...["Сильный кандидат", "Спорный кандидат", "Слабое тестовое", "В резерв"].map(option => el("option", { value: option, selected: draft.decision === option ? "selected" : null }, [option]))
+            ])
+          ]),
+          el("label", { class: "named-input" }, [
+            el("span", {}, ["Комментарий руководителя"]),
+            el("textarea", {
+              class: "input",
+              placeholder: "Что хорошо, что насторожило, что проверить дальше",
+              oninput: event => { draft.comment = event.target.value; }
+            }, [draft.comment])
+          ]),
+          el("button", { class: "btn primary", onclick: () => saveManualTestReview(item) }, ["Сохранить оценку руководителя"])
+        ]) : el("div")
+      ]),
+      el("section", { class: "test-review-card" }, [
+        el("h4", {}, ["AI-оценка"]),
+        evaluation ? el("div", { class: "ai-box compact" }, [
+          el("span", { class: "mode" }, [evaluation.mode === "yandex" ? "YandexGPT" : evaluation.mode === "openai" ? "OpenAI" : "Локальная оценка"]),
+          answerLine("Балл", `${evaluation.score}/100`),
+          el("p", {}, [evaluation.summary || ""]),
+          ...(evaluation.strengths || []).map(text => el("p", {}, [`Сильная сторона: ${text}`])),
+          ...(evaluation.risks || []).map(text => el("p", { class: "risk-text" }, [`Риск: ${text}`])),
+          evaluation.recommendation ? el("p", {}, [`Рекомендация: ${evaluation.recommendation}`]) : el("div"),
+          ...(evaluation.interviewQuestions || []).map(text => el("p", {}, [`Проверить на интервью: ${text}`]))
+        ]) : el("p", { class: "muted" }, ["AI-оценка еще не выполнена. После прикрепления результата запустите анализ тестового задания."]),
+        canEvaluate ? el("button", {
+          class: "btn primary",
+          onclick: () => evaluateTestAssignmentForSelected(item.id)
+        }, [evaluation ? "Переоценить тестовое ИИ" : "Оценить тестовое ИИ"]) : el("div")
       ])
     ])
   ]);
@@ -1331,8 +3450,11 @@ function consentText(consent) {
 
 function testAssignmentStatus(testAssignment) {
   if (!testAssignment?.eligible) return "не назначалось";
-  if (testAssignment.status === "submitted") return "ссылка получена";
-  if (testAssignment.status === "assigned") return "ожидаем выполнение";
+  if (testAssignment.status === "evaluated") return "Оценено ИИ: есть анализ и балл тестового задания";
+  if (testAssignment.status === "manual_reviewed") return "Оценено руководителем: ожидает AI-оценку или сравнение";
+  if (testAssignment.status === "submitted") return "Выполнено: кандидат прикрепил ссылку с результатом";
+  if (testAssignment.status === "issued") return "Тестовое выдано: кандидат открыл страницу задания";
+  if (testAssignment.status === "assigned") return "Назначено: кандидат получил переход к тестовому, страницу задания еще не открывал";
   return testAssignment.status || "не назначалось";
 }
 
@@ -1344,6 +3466,7 @@ function blockName(key) {
     contentCase: "Мини-кейс",
     tools: "Инструменты",
     analytics: "Аналитика / рост",
+    practicalCases: "Практические ситуации",
     culture: "Культура"
   }[key] || key;
 }

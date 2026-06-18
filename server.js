@@ -2,17 +2,58 @@ const http = require("http");
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const net = require("net");
+const tls = require("tls");
 const { scoreSubmission, buildFlowAnalytics } = require("./src/scoring");
 const {
   initDb,
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
+  listUsers,
+  createUser,
+  updateUser,
+  userCanAccessVacancy,
+  allowedVacancyCodes,
+  listHiringRequests,
+  createHiringRequest,
+  updateHiringRequest,
+  listVacancyOpenings,
+  createVacancyOpening,
+  updateVacancyOpening,
+  getVacancyOpening,
+  listHhVacancyTexts,
+  createHhVacancyText,
+  getHhVacancyText,
+  listHhPublications,
+  createHhPublication,
+  getHhPublication,
+  updateHhPublication,
+  getHhIntegrationAccount,
+  saveHhIntegrationAccount,
+  disconnectHhIntegrationAccount,
+  publicHhAccount,
+  upsertHhResponse,
+  getHhResponse,
+  listHhResponses,
+  markHhQuestionnaireSent,
+  registerHhWebhookEvent,
+  markHhWebhookEventProcessed,
+  createCommunication,
+  updateCommunication,
+  listCommunicationsByCandidate,
+  upsertTelegramLink,
+  getTelegramLinkByCandidate,
+  insertAuditLog,
+  listAuditLogs,
   insertSubmission,
   updateTestAssignment,
+  updateInterview,
   insertEvent,
   listEvents,
   listSubmissions,
+  listSubmissionsByVacancy,
   getSubmission,
+  deleteSubmission,
   authenticate,
   createSession,
   findSession,
@@ -23,12 +64,36 @@ const PORT = Number(process.env.PORT || 4173);
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "hr-demo";
 const ADMIN_PASSWORD_RESET = process.env.ADMIN_PASSWORD_RESET === "1";
+const HR_USERNAME = process.env.HR_USERNAME || "";
+const HR_PASSWORD = process.env.HR_PASSWORD || "";
+const HR_PASSWORD_RESET = process.env.HR_PASSWORD_RESET === "1";
 const AI_PROVIDER = process.env.AI_PROVIDER || (process.env.YANDEX_GPT_API_KEY ? "yandex" : "openai");
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const YANDEX_GPT_API_KEY = process.env.YANDEX_GPT_API_KEY || "";
 const YANDEX_FOLDER_ID = process.env.YANDEX_FOLDER_ID || "";
 const YANDEX_GPT_MODEL = process.env.YANDEX_GPT_MODEL || "yandexgpt-lite";
+const HH_CLIENT_ID = process.env.HH_CLIENT_ID || "";
+const HH_CLIENT_SECRET = process.env.HH_CLIENT_SECRET || "";
+const HH_REDIRECT_URI = process.env.HH_REDIRECT_URI || "https://hr.academy-management.ru/api/hh/oauth/callback";
+const HH_USER_AGENT = process.env.HH_USER_AGENT || "AcademyHR/1.0 (hr@praktiki.pro)";
+const HH_WEBHOOK_SECRET = process.env.HH_WEBHOOK_SECRET || "";
+const HH_WEBHOOK_URL = process.env.HH_WEBHOOK_URL || (HH_WEBHOOK_SECRET ? `https://hr.academy-management.ru/api/hh/webhook?token=${encodeURIComponent(HH_WEBHOOK_SECRET)}` : "");
+const HH_API_BASE = "https://api.hh.ru";
+const HH_AUTH_BASE = "https://hh.ru/oauth/authorize";
+const HH_TOKEN_URL = "https://hh.ru/oauth/token";
+const APP_PUBLIC_URL = String(process.env.APP_PUBLIC_URL || "https://hr.academy-management.ru").replace(/\/+$/, "");
+const SMTP_HOST = process.env.SMTP_HOST || "";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = process.env.SMTP_SECURE === "1" || SMTP_PORT === 465;
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASSWORD = process.env.SMTP_PASSWORD || "";
+const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || "hr@praktiki.pro";
+const SMTP_ENABLED = Boolean(SMTP_HOST && SMTP_PORT && SMTP_FROM);
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_BOT_USERNAME = String(process.env.TELEGRAM_BOT_USERNAME || "").replace(/^@/, "");
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || "";
+const TELEGRAM_WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL || (TELEGRAM_WEBHOOK_SECRET ? `${APP_PUBLIC_URL}/api/telegram/webhook?token=${encodeURIComponent(TELEGRAM_WEBHOOK_SECRET)}` : "");
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
   personalDataConsent: "personal_data_consent_v2"
@@ -36,6 +101,10 @@ const LEGAL_VERSION = {
 
 const rootDir = __dirname;
 const publicDir = path.join(rootDir, "public");
+const dataDir = path.join(rootDir, "data");
+const resumeUploadDir = path.join(dataDir, "uploads", "resumes");
+const MAX_RESUME_UPLOAD_BYTES = 8 * 1024 * 1024;
+const ALLOWED_RESUME_EXTENSIONS = new Set([".pdf", ".doc", ".docx"]);
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -48,12 +117,25 @@ const mime = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
-  ".ico": "image/x-icon"
+  ".ico": "image/x-icon",
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 };
 
 function sendJson(res, status, payload, headers = {}) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
   res.end(JSON.stringify(payload));
+}
+
+function staticHeaders(ext) {
+  const headers = { "Content-Type": mime[ext] || "application/octet-stream" };
+  if ([".html", ".js", ".css"].includes(ext)) {
+    headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+    headers.Pragma = "no-cache";
+    headers.Expires = "0";
+  }
+  return headers;
 }
 
 function readBody(req) {
@@ -75,6 +157,411 @@ function readBody(req) {
     });
     req.on("error", reject);
   });
+}
+
+function readRawBody(req, limit = MAX_RESUME_UPLOAD_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", chunk => {
+      size += chunk.length;
+      if (size > limit) {
+        req.destroy();
+        reject(new Error("Файл слишком большой. Максимальный размер: 8 МБ."));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function encodeMailHeader(value) {
+  const text = String(value || "");
+  return /^[\x00-\x7F]*$/.test(text) ? text : `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+}
+
+function dotStuff(text) {
+  return String(text || "").replace(/\r?\n/g, "\r\n").split("\r\n").map(line => line.startsWith(".") ? `.${line}` : line).join("\r\n");
+}
+
+function smtpRead(socket, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("SMTP timeout"));
+    }, timeoutMs);
+    function cleanup() {
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("error", onError);
+    }
+    function onError(error) {
+      cleanup();
+      reject(error);
+    }
+    function onData(chunk) {
+      buffer += chunk.toString("utf8");
+      const lines = buffer.split(/\r?\n/).filter(Boolean);
+      const last = lines[lines.length - 1] || "";
+      if (/^\d{3}\s/.test(last)) {
+        cleanup();
+        resolve(buffer);
+      }
+    }
+    socket.on("data", onData);
+    socket.on("error", onError);
+  });
+}
+
+async function smtpCommand(socket, command, expected = /^[23]/) {
+  if (command) socket.write(`${command}\r\n`);
+  const response = await smtpRead(socket);
+  if (!expected.test(response)) throw new Error(response.trim());
+  return response;
+}
+
+function smtpConnect() {
+  return new Promise((resolve, reject) => {
+    const socket = SMTP_SECURE
+      ? tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST })
+      : net.connect({ host: SMTP_HOST, port: SMTP_PORT });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("SMTP connection timeout"));
+    }, 12000);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+    socket.once("secureConnect", () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+    socket.once("error", error => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+async function upgradeSmtpToTls(socket) {
+  return new Promise((resolve, reject) => {
+    const secureSocket = tls.connect({ socket, servername: SMTP_HOST }, () => resolve(secureSocket));
+    secureSocket.once("error", reject);
+  });
+}
+
+async function sendSmtpMail({ to, subject, body }) {
+  if (!SMTP_ENABLED) throw new Error("SMTP_NOT_CONFIGURED");
+  let socket = await smtpConnect();
+  try {
+    await smtpCommand(socket, null);
+    let ehlo = await smtpCommand(socket, `EHLO ${SMTP_HOST}`);
+    if (!SMTP_SECURE && /STARTTLS/i.test(ehlo)) {
+      await smtpCommand(socket, "STARTTLS");
+      socket = await upgradeSmtpToTls(socket);
+      ehlo = await smtpCommand(socket, `EHLO ${SMTP_HOST}`);
+    }
+    if (SMTP_USER && SMTP_PASSWORD) {
+      await smtpCommand(socket, "AUTH LOGIN", /^334/);
+      await smtpCommand(socket, Buffer.from(SMTP_USER, "utf8").toString("base64"), /^334/);
+      await smtpCommand(socket, Buffer.from(SMTP_PASSWORD, "utf8").toString("base64"));
+    }
+    await smtpCommand(socket, `MAIL FROM:<${SMTP_FROM}>`);
+    await smtpCommand(socket, `RCPT TO:<${to}>`);
+    await smtpCommand(socket, "DATA", /^354/);
+    const message = [
+      `From: ${encodeMailHeader("Академия менеджмента")} <${SMTP_FROM}>`,
+      `To: <${to}>`,
+      `Subject: ${encodeMailHeader(subject)}`,
+      `Date: ${new Date().toUTCString()}`,
+      "MIME-Version: 1.0",
+      "Content-Type: text/plain; charset=utf-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      dotStuff(body),
+      "."
+    ].join("\r\n");
+    socket.write(`${message}\r\n`);
+    const response = await smtpRead(socket);
+    if (!/^[23]/.test(response)) throw new Error(response.trim());
+    socket.write("QUIT\r\n");
+    return { response: response.trim() };
+  } finally {
+    socket.end();
+  }
+}
+
+function candidateEmail(record) {
+  return String(record?.answers?.email || record?.candidate?.email || "").trim();
+}
+
+function candidateName(record) {
+  return String(record?.candidate?.fullName || record?.answers?.fullName || "кандидат").trim();
+}
+
+function testAssignmentUrl(record) {
+  return `${APP_PUBLIC_URL}/v/${encodeURIComponent(record.vacancyCode || "smm")}#test/${encodeURIComponent(record.id)}`;
+}
+
+function renderEmailTemplate(eventType, record) {
+  const name = candidateName(record);
+  const signature = [
+    "",
+    "С уважением,",
+    "HR-команда Бизнес-школы \"Академия менеджмента\""
+  ].join("\n");
+  if (eventType === "test_assignment_invite") {
+    return {
+      subject: "Следующий этап: тестовое задание",
+      body: [
+        `${name}, здравствуйте!`,
+        "",
+        "Спасибо за анкету. По итогам первого этапа мы готовы предложить вам показать себя в деле и выполнить небольшое тестовое задание.",
+        "",
+        `Перейдите по ссылке: ${testAssignmentUrl(record)}`,
+        "",
+        "Задание можно выполнить в Google Документе, а затем прикрепить ссылку на странице задания.",
+        signature
+      ].join("\n")
+    };
+  }
+  if (eventType === "test_assignment_received") {
+    return {
+      subject: "Тестовое задание получено",
+      body: [
+        `${name}, здравствуйте!`,
+        "",
+        "Спасибо, мы получили ссылку на ваше тестовое задание.",
+        "HR и руководитель изучат результат и вернутся с обратной связью по следующему этапу.",
+        signature
+      ].join("\n")
+    };
+  }
+  return {
+    subject: "Анкета получена",
+    body: [
+      `${name}, здравствуйте!`,
+      "",
+      "Спасибо, мы получили вашу анкету.",
+      "HR-команда изучит ответы и вернется с обратной связью, если следующий этап будет актуален.",
+      signature
+    ].join("\n")
+  };
+}
+
+async function queueCandidateEmail(record, eventType, payload = {}) {
+  const recipient = candidateEmail(record);
+  const template = renderEmailTemplate(eventType, record);
+  const communication = createCommunication({
+    candidateId: record.id,
+    vacancyCode: record.vacancyCode,
+    channel: "email",
+    eventType,
+    recipient,
+    subject: template.subject,
+    body: template.body,
+    status: recipient ? "pending" : "skipped",
+    provider: "smtp",
+    error: recipient ? "" : "candidate_email_missing",
+    payload
+  });
+  if (!recipient) return communication;
+  if (!SMTP_ENABLED) {
+    return updateCommunication(communication.id, { status: "pending", error: "SMTP_NOT_CONFIGURED" });
+  }
+  try {
+    const providerResponse = await sendSmtpMail({ to: recipient, subject: template.subject, body: template.body });
+    return updateCommunication(communication.id, {
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      error: "",
+      providerResponse
+    });
+  } catch (error) {
+    return updateCommunication(communication.id, {
+      status: "failed",
+      error: error.message || String(error)
+    });
+  }
+}
+
+function queueCandidateEmailAsync(record, eventType, payload = {}) {
+  queueCandidateEmail(record, eventType, payload).catch(error => {
+    console.error("Email communication failed", error);
+  });
+}
+
+function telegramConfigured() {
+  return Boolean(TELEGRAM_BOT_TOKEN);
+}
+
+function telegramBotDeepLink(candidateId) {
+  if (!TELEGRAM_BOT_USERNAME || !candidateId) return null;
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?start=c_${encodeURIComponent(candidateId)}`;
+}
+
+async function telegramApi(method, payload) {
+  if (!telegramConfigured()) throw new Error("TELEGRAM_BOT_TOKEN_NOT_CONFIGURED");
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.description || `Telegram API HTTP ${response.status}`);
+  }
+  return data;
+}
+
+async function sendTelegramCandidateMessage(record, chatId, eventType, text, payload = {}) {
+  const recipient = String(chatId || "");
+  const communication = createCommunication({
+    candidateId: record.id,
+    vacancyCode: record.vacancyCode,
+    channel: "telegram",
+    eventType,
+    recipient,
+    subject: "Сообщение Telegram",
+    body: text,
+    status: recipient ? "pending" : "skipped",
+    provider: "telegram",
+    error: recipient ? "" : "telegram_chat_id_missing",
+    payload
+  });
+  if (!recipient) return communication;
+  try {
+    const providerResponse = await telegramApi("sendMessage", {
+      chat_id: recipient,
+      text,
+      disable_web_page_preview: true
+    });
+    return updateCommunication(communication.id, {
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      error: "",
+      providerResponse
+    });
+  } catch (error) {
+    return updateCommunication(communication.id, {
+      status: "failed",
+      error: error.message || String(error)
+    });
+  }
+}
+
+function telegramContactLabel(from, chatId) {
+  if (from?.username) return `@${from.username}`;
+  return String(chatId || from?.id || "");
+}
+
+function parseTelegramStartCandidateId(text) {
+  const match = String(text || "").trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
+  if (!match) return "";
+  const payload = String(match[1] || "").trim();
+  if (!payload.startsWith("c_")) return "";
+  return payload.slice(2);
+}
+
+async function processTelegramWebhook(payload) {
+  const message = payload?.message || payload?.edited_message || null;
+  const text = String(message?.text || "").trim();
+  const chatId = message?.chat?.id;
+  const from = message?.from || {};
+  const candidateId = parseTelegramStartCandidateId(text);
+  if (!message || !candidateId) {
+    return { ignored: true, reason: "not_candidate_start" };
+  }
+  const record = getSubmission(candidateId);
+  if (!record) {
+    if (chatId && telegramConfigured()) {
+      await telegramApi("sendMessage", {
+        chat_id: chatId,
+        text: "Не смог найти анкету по этой ссылке. Вернитесь на страницу анкеты и откройте Telegram еще раз.",
+        disable_web_page_preview: true
+      }).catch(() => null);
+    }
+    return { ignored: true, reason: "candidate_not_found" };
+  }
+  const telegramLink = upsertTelegramLink({
+    candidateId: record.id,
+    vacancyCode: record.vacancyCode,
+    telegramUserId: from.id,
+    chatId,
+    username: from.username || "",
+    firstName: from.first_name || "",
+    lastName: from.last_name || "",
+    status: "linked",
+    payload: {
+      updateId: payload.update_id || null,
+      linkedFrom: "deep_link_start"
+    }
+  });
+  createCommunication({
+    candidateId: record.id,
+    vacancyCode: record.vacancyCode,
+    channel: "telegram",
+    eventType: "telegram_deep_link_linked",
+    recipient: telegramContactLabel(from, chatId),
+    subject: "Telegram привязан",
+    body: "Кандидат открыл Telegram-бота по персональной deep-link ссылке.",
+    status: "received",
+    provider: "telegram",
+    payload: {
+      updateId: payload.update_id || null,
+      telegramLinkId: telegramLink?.id || "",
+      telegramUserId: String(from.id || ""),
+      chatId: String(chatId || ""),
+      username: from.username || ""
+    }
+  });
+  await sendTelegramCandidateMessage(
+    record,
+    chatId,
+    "telegram_link_confirmation_sent",
+    "Готово, я привязал Telegram к вашей анкете. Здесь мы сможем присылать уведомления по следующим этапам подбора.",
+    { telegramLinkId: telegramLink?.id || "" }
+  );
+  return { linked: true, candidateId: record.id };
+}
+
+function parseMultipartFile(buffer, contentType) {
+  const boundary = String(contentType || "").match(/boundary=(?:"([^"]+)"|([^;]+))/i)?.[1] ||
+    String(contentType || "").match(/boundary=(?:"([^"]+)"|([^;]+))/i)?.[2];
+  if (!boundary) throw new Error("Некорректная загрузка файла: не найден boundary.");
+  const raw = buffer.toString("latin1");
+  const parts = raw.split(`--${boundary}`);
+  for (const part of parts) {
+    if (!part.includes('name="resume"')) continue;
+    const [rawHeaders, ...bodyParts] = part.split("\r\n\r\n");
+    const headers = rawHeaders || "";
+    const filename = headers.match(/filename="([^"]*)"/i)?.[1];
+    const contentMime = headers.match(/Content-Type:\s*([^\r\n]+)/i)?.[1]?.trim() || "application/octet-stream";
+    if (!filename) throw new Error("Файл не выбран.");
+    let body = bodyParts.join("\r\n\r\n");
+    body = body.replace(/\r\n$/u, "");
+    return {
+      originalName: path.basename(Buffer.from(filename, "latin1").toString("utf8")),
+      mimeType: contentMime,
+      buffer: Buffer.from(body, "latin1")
+    };
+  }
+  throw new Error("Файл резюме не найден в запросе.");
+}
+
+function safeResumeFileName(originalName) {
+  const ext = path.extname(originalName || "").toLowerCase();
+  if (!ALLOWED_RESUME_EXTENSIONS.has(ext)) {
+    throw new Error("Можно прикрепить только PDF, DOC или DOCX.");
+  }
+  const base = path.basename(originalName, ext)
+    .replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]+/g, "-")
+    .slice(0, 80) || "resume";
+  return `${Date.now()}-${crypto.randomUUID()}-${base}${ext}`;
 }
 
 function parseCookies(req) {
@@ -116,19 +603,618 @@ function requireAdmin(req, res) {
   return session;
 }
 
+function publicSessionUser(session) {
+  return {
+    username: session.username,
+    email: session.email || session.username,
+    displayName: session.displayName || "",
+    role: session.role,
+    vacancyAccess: session.vacancyAccess || []
+  };
+}
+
+function requireOwner(session, res) {
+  if (session?.role === "owner") return true;
+  sendJson(res, 403, { error: "Недостаточно прав. Доступ только для владельца." });
+  return false;
+}
+
+function canManageVacancy(session, vacancyCode) {
+  return session?.role === "owner" || session?.role === "hr" || userCanAccessVacancy(session, vacancyCode);
+}
+
+function canWriteVacancy(session, vacancyCode) {
+  return (session?.role === "owner" || session?.role === "hr") && userCanAccessVacancy(session, vacancyCode);
+}
+
+function vacancyCodes(config = getQuestionnaireConfig()) {
+  return Object.keys(config.vacancies || { [config.vacancyCode || "smm"]: config });
+}
+
+function visibleVacancies(session, config = getQuestionnaireConfig()) {
+  const allowed = allowedVacancyCodes(session, vacancyCodes(config));
+  const vacancies = getVacancies(config);
+  return Object.fromEntries(Object.entries(vacancies).filter(([code]) => allowed.includes(code)));
+}
+
+function filterByVacancyAccess(session, items, getCode = item => item.vacancyCode) {
+  const baseConfig = getQuestionnaireConfig();
+  const allowed = allowedVacancyCodes(session, vacancyCodes(baseConfig));
+  return items.filter(item => {
+    const code = getCode(item);
+    if (!code) return session.role === "owner" || session.role === "hr";
+    return allowed.includes(code);
+  });
+}
+
+function buildHeadHunterDraft(vacancyCode, opening = null) {
+  const baseConfig = getQuestionnaireConfig();
+  const config = getVacancyConfig(vacancyCode, baseConfig);
+  const title = config.publicTitle || config.title || opening?.title || vacancyCode;
+  const questionnaireLink = `https://hr.academy-management.ru/v/${encodeURIComponent(vacancyCode)}?source=headhunter`;
+  return [
+    `# ${title}`,
+    "",
+    "Академия менеджмента - онлайн-школа для предпринимателей, руководителей и специалистов, которые хотят сильнее управлять бизнесом, командами и результатом.",
+    "",
+    `Сейчас мы открываем роль "${title}", потому что усиливаем команду и хотим передать важную зону ответственности человеку, который умеет работать системно, спокойно и на результат.`,
+    "",
+    "## Чем интересна роль",
+    "",
+    "- можно влиять на реальные процессы, а не просто выполнять разрозненные задачи;",
+    "- рядом предпринимательская команда, где ценят ответственность и ясную коммуникацию;",
+    "- роль связана с ростом образовательных продуктов и развитием внутренней системы управления;",
+    "- мы активно внедряем ИИ и автоматизацию в рабочие процессы.",
+    "",
+    "## Что предстоит делать",
+    "",
+    "Конкретный функционал зависит от вакансии и будет подробно обсуждаться на интервью. В целом нам важен человек, который умеет брать зону ответственности, доводить задачи до результата и ясно показывать статус работы.",
+    "",
+    "## Кому подойдет",
+    "",
+    "- вы умеете работать самостоятельно;",
+    "- не теряетесь в задачах и сроках;",
+    "- спокойно относитесь к обратной связи;",
+    "- умеете договариваться и фиксировать договоренности;",
+    "- хотите работать в среде, где важны развитие, качество и результат.",
+    "",
+    "## Кому не подойдет",
+    "",
+    "- если вам нужен постоянный микроконтроль;",
+    "- если вы не готовы работать с цифрами, задачами и ответственностью;",
+    "- если вам комфортнее просто выполнять поручения без вовлечения в результат.",
+    "",
+    "## Как проходит отбор",
+    "",
+    "Первый шаг - короткая анкета на нашей платформе. Она занимает 7-10 минут и помогает нам быстрее понять ваш опыт и подход к рабочим ситуациям.",
+    "",
+    `Анкета: ${questionnaireLink}`,
+    "",
+    "После анкеты мы вернемся с понятным следующим шагом: тестовое задание, интервью с HR или интервью с руководителем."
+  ].join("\n");
+}
+
+function buildTelegramDrafts(vacancyCode, opening = null) {
+  const baseConfig = getQuestionnaireConfig();
+  const config = getVacancyConfig(vacancyCode, baseConfig);
+  const title = config.publicTitle || config.title || opening?.title || vacancyCode;
+  const questionnaireLink = `https://hr.academy-management.ru/v/${encodeURIComponent(vacancyCode)}?source=telegram`;
+  const chatPost = [
+    `Ищем в команду: ${title}`,
+    "",
+    "Бизнес-школа \"Академия менеджмента\" усиливает команду и ищет человека, который умеет работать системно, спокойно и на результат.",
+    "",
+    "Что важно:",
+    "- самостоятельность и ответственность;",
+    "- ясная коммуникация;",
+    "- готовность работать с задачами, сроками и результатом;",
+    "- интерес к развитию и современным рабочим инструментам.",
+    "",
+    "Первый шаг отбора - короткая анкета на 7-10 минут. Она помогает нам быстро понять ваш опыт и не тратить ваше время на неподходящие этапы.",
+    "",
+    `Анкета: ${questionnaireLink}`,
+    "",
+    "Если откликается по смыслу - заполните анкету, и мы вернемся с обратной связью."
+  ].join("\n");
+  const directMessage = [
+    "Здравствуйте!",
+    "",
+    `Увидели ваш профиль/сообщение и хотим предложить рассмотреть роль: ${title}.`,
+    "",
+    "Мы - Бизнес-школа \"Академия менеджмента\". Сейчас усиливаем команду и ищем человека, который умеет брать зону ответственности и доводить задачи до результата.",
+    "",
+    "Если вам интересно, пройдите короткую анкету. Это займет 7-10 минут и поможет нам понять, есть ли смысл двигаться дальше к тестовому или интервью.",
+    "",
+    `Анкета: ${questionnaireLink}`,
+    "",
+    "Будем рады познакомиться."
+  ].join("\n");
+  return { chatPost, directMessage };
+}
+
+function hhConfigured() {
+  return Boolean(HH_CLIENT_ID && HH_CLIENT_SECRET && HH_REDIRECT_URI);
+}
+
+function hhOAuthUrl(session) {
+  const statePayload = Buffer.from(JSON.stringify({
+    userId: session.userId,
+    ts: Date.now(),
+    nonce: crypto.randomBytes(12).toString("hex")
+  })).toString("base64url");
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: HH_CLIENT_ID,
+    redirect_uri: HH_REDIRECT_URI,
+    state: statePayload
+  });
+  return `${HH_AUTH_BASE}?${params.toString()}`;
+}
+
+async function hhTokenRequest(params) {
+  const response = await fetch(HH_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": HH_USER_AGENT,
+      "HH-User-Agent": HH_USER_AGENT
+    },
+    body: new URLSearchParams(params)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error_description || data.error || `HeadHunter token HTTP ${response.status}`);
+  }
+  return data;
+}
+
+function hhTokenExpiresAt(tokenData) {
+  const seconds = Number(tokenData.expires_in || 0);
+  if (!seconds) return null;
+  return new Date(Date.now() + Math.max(60, seconds - 60) * 1000).toISOString();
+}
+
+async function refreshHhAccountIfNeeded() {
+  const account = getHhIntegrationAccount();
+  if (!account?.accessToken) return account;
+  if (!account.expiresAt || new Date(account.expiresAt).getTime() > Date.now()) return account;
+  if (!account.refreshToken) return account;
+  const tokenData = await hhTokenRequest({
+    grant_type: "refresh_token",
+    refresh_token: account.refreshToken
+  });
+  return saveHhIntegrationAccount({
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token || account.refreshToken,
+    expiresAt: hhTokenExpiresAt(tokenData),
+    status: "connected"
+  });
+}
+
+async function hhApi(pathname, options = {}) {
+  const account = await refreshHhAccountIfNeeded();
+  if (!account?.accessToken) throw new Error("HeadHunter не подключен.");
+  const response = await fetch(`${HH_API_BASE}${pathname}`, {
+    method: options.method || "GET",
+    headers: {
+      "Authorization": `Bearer ${account.accessToken}`,
+      "User-Agent": HH_USER_AGENT,
+      "HH-User-Agent": HH_USER_AGENT,
+      ...(options.body ? { "Content-Type": "application/json" } : {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new Error(data.description || data.error_description || data.error || `HeadHunter API HTTP ${response.status}`);
+  }
+  return data;
+}
+
+const HH_WEBHOOK_ACTIONS = [
+  { type: "NEW_NEGOTIATION_VACANCY", settings: { vacancies_only_mine: false } }
+];
+
+async function ensureHhWebhookSubscription() {
+  if (!HH_WEBHOOK_URL) throw new Error("Не задан HH_WEBHOOK_SECRET или HH_WEBHOOK_URL.");
+  const account = getHhIntegrationAccount();
+  if (!account?.accessToken) throw new Error("HeadHunter не подключен.");
+  if (account.me?.is_employer === false || account.me?.auth_type === "applicant") {
+    throw new Error("HeadHunter подключен как аккаунт соискателя. Нужно переподключить через кабинет работодателя/менеджера HH.");
+  }
+  const existing = await hhApi("/webhook/subscriptions");
+  const subscriptions = existing.items || existing.subscriptions || [];
+  const current = subscriptions.find(item => item.url === HH_WEBHOOK_URL);
+  const body = { url: HH_WEBHOOK_URL, actions: HH_WEBHOOK_ACTIONS };
+  let subscriptionId = current?.id || current?.subscription_id || null;
+  if (subscriptionId) {
+    await hhApi(`/webhook/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+      method: "PUT",
+      body
+    });
+  } else {
+    try {
+      const created = await hhApi("/webhook/subscriptions", {
+        method: "POST",
+        body
+      });
+      subscriptionId = created.id || created.subscription_id || null;
+    } catch (error) {
+      if (!String(error.message || "").includes("already_exist")) throw error;
+      const refreshed = await hhApi("/webhook/subscriptions");
+      const refreshedSubscriptions = refreshed.items || refreshed.subscriptions || [];
+      const fallback = refreshedSubscriptions[0];
+      subscriptionId = fallback?.id || fallback?.subscription_id || null;
+      if (subscriptionId) {
+        await hhApi(`/webhook/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+          method: "PUT",
+          body
+        });
+      }
+    }
+  }
+  const updatedAccount = saveHhIntegrationAccount({
+    me: {
+      ...(account.me || {}),
+      webhook: {
+        configured: Boolean(subscriptionId),
+        subscriptionId,
+        url: HH_WEBHOOK_URL.replace(HH_WEBHOOK_SECRET, "***"),
+        actions: HH_WEBHOOK_ACTIONS.map(action => action.type),
+        updatedAt: new Date().toISOString()
+      }
+    },
+    status: "connected"
+  });
+  return updatedAccount.me.webhook;
+}
+
+async function processHhWebhookEvent(event) {
+  const actionType = String(event?.action_type || "");
+  const payload = event?.payload || {};
+  const hhVacancyId = String(payload.vacancy_id || "").trim();
+  const webhookEvent = registerHhWebhookEvent(event);
+  if (webhookEvent.duplicate) return { duplicate: true };
+  if (!["NEW_NEGOTIATION_VACANCY", "NEW_RESPONSE_OR_INVITATION_VACANCY"].includes(actionType)) {
+    markHhWebhookEventProcessed(event.id, { ...event, ignored: true, reason: "unsupported_action" });
+    return { ignored: true, reason: "unsupported_action" };
+  }
+  if (!hhVacancyId) {
+    markHhWebhookEventProcessed(event.id, { ...event, ignored: true, reason: "no_vacancy_id" });
+    return { ignored: true, reason: "no_vacancy_id" };
+  }
+  const publications = findHhPublicationsByVacancyId(hhVacancyId);
+  if (!publications.length) {
+    markHhWebhookEventProcessed(event.id, { ...event, ignored: true, reason: "publication_not_linked" });
+    return { ignored: true, reason: "publication_not_linked", hhVacancyId };
+  }
+  const results = [];
+  for (const publication of publications) {
+    const result = await syncHhPublicationResponses(publication);
+    results.push({
+      publicationId: publication.id,
+      vacancyCode: publication.vacancyCode,
+      found: result.found,
+      synced: result.responses.length
+    });
+    insertAuditLog({
+      user: null,
+      action: "hh.webhook.sync",
+      targetType: "hh_publication",
+      targetId: publication.id,
+      vacancyCode: publication.vacancyCode,
+      payload: { eventId: event.id, actionType, hhVacancyId, found: result.found, synced: result.responses.length }
+    });
+  }
+  markHhWebhookEventProcessed(event.id, { ...event, processedResults: results });
+  return { duplicate: false, hhVacancyId, results };
+}
+
+function hhQuestionnaireMessage(responseItem) {
+  const title = vacancyLabelFromConfig(responseItem.vacancyCode);
+  const link = `https://hr.academy-management.ru/v/${encodeURIComponent(responseItem.vacancyCode)}?source=headhunter&negotiation=${encodeURIComponent(responseItem.negotiationId)}`;
+  const name = responseItem.candidateName ? `${responseItem.candidateName}, здравствуйте!` : "Здравствуйте!";
+  return [
+    name,
+    "",
+    `Спасибо за отклик на вакансию "${title}" в Академии менеджмента.`,
+    "",
+    "Мы смотрим не только резюме, но и то, как человек думает в рабочих ситуациях. Поэтому первый шаг у нас - короткая анкета на 7-10 минут.",
+    "",
+    `Пожалуйста, заполните ее здесь: ${link}`,
+    "",
+    "После анкеты мы сможем быстрее понять, насколько роль вам подходит, и вернуться с понятным следующим шагом."
+  ].join("\n");
+}
+
+function normalizeHhNegotiation(item, publication) {
+  const resume = item.resume || {};
+  const candidateName = [resume.first_name, resume.last_name].filter(Boolean).join(" ") || resume.title || "";
+  return {
+    vacancyCode: publication.vacancyCode,
+    publicationId: publication.id,
+    hhVacancyId: publication.hhVacancyId,
+    negotiationId: item.id || item.nid || item.negotiation_id,
+    resumeId: resume.id || item.resume_id || "",
+    candidateName,
+    resumeUrl: resume.alternate_url || resume.url || "",
+    state: item.state?.id || item.employer_state?.id || "",
+    payload: item
+  };
+}
+
+function asMetricNumber(...values) {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+}
+
+function normalizeHhVacancyMetrics(data = {}) {
+  const counters = data.counters || {};
+  const statistics = data.statistics || data.stats || {};
+  const views = asMetricNumber(
+    counters.views,
+    counters.total_views,
+    counters.views_total,
+    statistics.views,
+    statistics.total_views,
+    data.views
+  );
+  const responses = asMetricNumber(
+    counters.responses,
+    counters.negotiations,
+    counters.total_responses,
+    statistics.responses,
+    statistics.negotiations,
+    data.responses
+  );
+  return {
+    views,
+    responses,
+    archived: Boolean(data.archived),
+    published: Boolean(data.published_at || data.publishedAt),
+    name: data.name || "",
+    area: data.area?.name || "",
+    employer: data.employer?.name || "",
+    alternateUrl: data.alternate_url || data.alternateUrl || "",
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+async function syncHhPublicationMetrics(publication) {
+  if (!publication?.hhVacancyId) return publication;
+  try {
+    const vacancy = await hhApi(`/vacancies/${encodeURIComponent(publication.hhVacancyId)}`);
+    const metrics = normalizeHhVacancyMetrics(vacancy);
+    return updateHhPublication(publication.id, {
+      url: publication.url || metrics.alternateUrl || "",
+      status: metrics.archived ? "archived" : (publication.status || "published"),
+      publishedAt: publication.publishedAt || vacancy.published_at || vacancy.created_at || null,
+      payload: {
+        hhMetrics: metrics,
+        hhVacancy: {
+          id: publication.hhVacancyId,
+          name: metrics.name,
+          area: metrics.area,
+          employer: metrics.employer,
+          alternateUrl: metrics.alternateUrl,
+          fetchedAt: metrics.fetchedAt
+        }
+      }
+    });
+  } catch (error) {
+    return updateHhPublication(publication.id, {
+      payload: {
+        hhMetricsError: {
+          message: error.message || "Не удалось получить метрики вакансии HeadHunter.",
+          fetchedAt: new Date().toISOString()
+        }
+      }
+    });
+  }
+}
+
+async function syncHhPublicationResponses(publication) {
+  if (!publication?.hhVacancyId) throw new Error("У публикации нет ID вакансии HeadHunter.");
+  await syncHhPublicationMetrics(publication);
+  const data = await hhApi(`/negotiations?vacancy_id=${encodeURIComponent(publication.hhVacancyId)}`);
+  const items = data.items || [];
+  const responses = items
+    .map(item => normalizeHhNegotiation(item, publication))
+    .filter(item => item.negotiationId)
+    .map(item => upsertHhResponse(item));
+  return { responses, found: data.found ?? responses.length };
+}
+
+function findHhPublicationsByVacancyId(hhVacancyId) {
+  const id = String(hhVacancyId || "").trim();
+  if (!id) return [];
+  return listHhPublications().filter(publication => String(publication.hhVacancyId || "") === id);
+}
+
 function publicCandidate(item) {
   return {
     id: item.id,
+    vacancyCode: item.vacancyCode,
     submittedAt: item.submittedAt,
     candidate: item.candidate,
+    answers: item.answers,
+    consents: item.consents,
     score: item.score,
     recommendation: item.recommendation,
     flags: item.flags,
     strengths: item.strengths,
     risks: item.risks,
     hrNote: item.hrNote,
-    testAssignment: item.testAssignment
+    testAssignment: item.testAssignment,
+    interview: item.interview,
+    telegramLink: getTelegramLinkByCandidate(item.id),
+    communications: listCommunicationsByCandidate(item.id),
+    funnelReview: buildCandidateFunnelReview(item)
   };
+}
+
+function finalRecommendationByScore(score, hasFinalEvaluation, waitingForTestEvaluation = false, fallbackRecommendation = null) {
+  if (waitingForTestEvaluation) {
+    return {
+      code: "pending",
+      label: "Ждем оценку тестового",
+      status: "рекомендация на интервью пока не финальная",
+      action: "Оцените тестовое задание, чтобы получить суммарную рекомендацию."
+    };
+  }
+  if (!hasFinalEvaluation && fallbackRecommendation) {
+    return {
+      ...fallbackRecommendation,
+      status: fallbackRecommendation.status || "решение принято по анкете",
+      action: fallbackRecommendation.action || "Тестовое задание не назначалось: кандидат не прошел порог для следующего этапа."
+    };
+  }
+  if (score >= 75) {
+    return {
+      code: "green",
+      label: "Рекомендован на первое интервью",
+      status: "анкета и тестовое достаточно сильные",
+      action: "Пригласить на первое интервью с менеджером по персоналу."
+    };
+  }
+  if (score >= 55) {
+    return {
+      code: "yellow",
+      label: "Ручной разбор",
+      status: "есть сильные стороны, но тестовое или анкета требуют проверки",
+      action: "Разобрать риски вручную перед приглашением на интервью."
+    };
+  }
+  return {
+    code: "red",
+    label: "Не рекомендован",
+    status: "суммарная оценка слабая",
+    action: "Не приглашать на интервью без отдельной причины."
+  };
+}
+
+function normalizeScore(value) {
+  const score = Math.round(Number(value || 0));
+  return Math.max(0, Math.min(100, score));
+}
+
+function buildTestAssignmentReview(testAssignment = {}) {
+  const aiEvaluation = testAssignment.evaluation || null;
+  const manualReview = testAssignment.manualReview || null;
+  const aiScore = aiEvaluation ? normalizeScore(aiEvaluation.score) : null;
+  const manualScore = manualReview ? normalizeScore(manualReview.score) : null;
+  const hasAi = aiScore !== null;
+  const hasManual = manualScore !== null;
+  const finalScore = hasAi && hasManual
+    ? Math.round(manualScore * 0.7 + aiScore * 0.3)
+    : hasManual
+      ? manualScore
+      : hasAi
+        ? aiScore
+        : null;
+  const difference = hasAi && hasManual ? Math.abs(manualScore - aiScore) : null;
+  const comparisonStatus = difference === null
+    ? (hasManual ? "waiting_ai" : hasAi ? "waiting_manual" : "waiting_scores")
+    : difference <= 15
+      ? "aligned"
+      : difference <= 25
+        ? "manual_review"
+        : "conflict";
+  const comparisonLabel = {
+    waiting_scores: "ждем оценку руководителя и ИИ",
+    waiting_ai: "ждем AI-оценку",
+    waiting_manual: "ждем оценку руководителя",
+    aligned: "оценки согласованы",
+    manual_review: "есть расхождение, нужна ручная проверка",
+    conflict: "сильное расхождение оценок"
+  }[comparisonStatus];
+  return {
+    aiScore,
+    manualScore,
+    finalScore,
+    difference,
+    comparisonStatus,
+    comparisonLabel,
+    formula: hasAi && hasManual
+      ? "руководитель 70% + ИИ 30%"
+      : hasManual
+        ? "пока только оценка руководителя"
+        : hasAi
+          ? "пока только AI-оценка"
+          : "тестовое еще не оценено"
+  };
+}
+
+function buildCandidateFunnelReview(item) {
+  const questionnaireScore = Number(item.score?.total || 0);
+  const testReview = buildTestAssignmentReview(item.testAssignment || {});
+  const hasAssignedTest = Boolean(item.testAssignment?.eligible);
+  const hasTestEvaluation = testReview.finalScore !== null;
+  const testScore = hasTestEvaluation ? testReview.finalScore : 0;
+  const interviewScore = Number(item.interview?.evaluation?.score || 0);
+  const hasInterviewEvaluation = Number.isFinite(interviewScore) && item.interview?.evaluation;
+  const waitingForTestEvaluation = hasAssignedTest && !hasTestEvaluation && !hasInterviewEvaluation;
+  const totalScore = hasTestEvaluation && hasInterviewEvaluation
+    ? Math.round(questionnaireScore * 0.35 + testScore * 0.30 + interviewScore * 0.35)
+    : hasTestEvaluation
+      ? Math.round(questionnaireScore * 0.6 + testScore * 0.4)
+      : hasInterviewEvaluation
+        ? Math.round(questionnaireScore * 0.65 + interviewScore * 0.35)
+        : questionnaireScore;
+  return {
+    questionnaireScore,
+    testScore: hasTestEvaluation ? testScore : null,
+    testReview,
+    interviewScore: hasInterviewEvaluation ? interviewScore : null,
+    totalScore,
+    formula: hasTestEvaluation && hasInterviewEvaluation
+      ? "анкета 35% + тестовое 30% + интервью 35%"
+      : hasTestEvaluation
+        ? "анкета 60% + тестовое 40%"
+        : hasInterviewEvaluation
+        ? "анкета 65% + интервью 35%"
+        : "пока только анкета",
+    recommendation: finalRecommendationByScore(
+      totalScore,
+      hasTestEvaluation || hasInterviewEvaluation,
+      waitingForTestEvaluation,
+      item.recommendation
+    )
+  };
+}
+
+function getVacancies(config = getQuestionnaireConfig()) {
+  const vacancies = config.vacancies || {
+    [config.vacancyCode || "smm"]: config
+  };
+  return Object.fromEntries(Object.entries(vacancies).map(([code, vacancy]) => [
+    code,
+    {
+      code,
+      title: vacancy.publicTitle || vacancy.title || code,
+      adminTitle: vacancy.adminTitle || vacancy.publicTitle || code,
+      active: vacancy.status !== "paused"
+    }
+  ]));
+}
+
+function getVacancyConfig(vacancyCode, config = getQuestionnaireConfig()) {
+  const code = vacancyCode || config.activeVacancyCode || config.vacancyCode || "smm";
+  return config.vacancies?.[code] || config;
+}
+
+function vacancyLabelFromConfig(vacancyCode, config = getQuestionnaireConfig()) {
+  if (!vacancyCode) return "";
+  const vacancy = getVacancyConfig(vacancyCode, config);
+  return vacancy?.adminTitle || vacancy?.publicTitle || vacancy?.title || vacancyCode;
+}
+
+function requestedVacancyCode(url, fallback = "smm") {
+  return url.searchParams.get("vacancy") || fallback;
 }
 
 function testAssignmentConfig(config) {
@@ -263,21 +1349,361 @@ async function generateOpenAiInsights(submissions, analytics) {
   return { mode: "ai", ...parseAiJson(content) };
 }
 
+function extractGoogleFileId(link) {
+  const text = String(link || "");
+  return text.match(/\/document\/d\/([^/]+)/)?.[1] ||
+    text.match(/\/file\/d\/([^/]+)/)?.[1] ||
+    text.match(/[?&]id=([^&]+)/)?.[1] ||
+    null;
+}
+
+async function fetchTestAssignmentText(link) {
+  const id = extractGoogleFileId(link);
+  if (!id) throw new Error("Не удалось определить идентификатор Google-документа.");
+  const urls = [
+    `https://docs.google.com/document/d/${id}/export?format=txt`,
+    `https://drive.google.com/uc?export=download&id=${id}`
+  ];
+  let lastError = null;
+  for (const exportUrl of urls) {
+    try {
+      const response = await fetch(exportUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      if (text.trim().length > 80 && !/<html/i.test(text.slice(0, 500))) {
+        return text.slice(0, 18000);
+      }
+      lastError = new Error("документ вернул пустой текст или HTML-страницу");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Не удалось прочитать Google-документ. Проверьте доступ по ссылке: ${lastError?.message || "нет данных"}.`);
+}
+
+function testAssignmentPrompt(record, config, text) {
+  const criteria = config.testAssignment?.evaluationCriteria || [];
+  return [
+    `Ты оцениваешь тестовое задание кандидата на вакансию "${config.publicTitle || config.title}".`,
+    "Оцени только по содержанию выполненного тестового задания. Не придумывай факты, которых нет в тексте.",
+    "Верни строго JSON без Markdown: {score:number,summary:string,strengths:string[],risks:string[],criteria:{title:string,score:number,max:number,comment:string}[],recommendation:string,interviewQuestions:string[]}.",
+    "score - итоговая оценка от 0 до 100.",
+    "recommendation - одно короткое решение: пригласить на первое интервью / ручной разбор / отказ.",
+    JSON.stringify({
+      candidate: {
+        score: record.score?.total,
+        vacancyCode: record.vacancyCode,
+        answers: record.answers
+      },
+      testAssignment: {
+        title: config.testAssignment?.title,
+        instruction: config.testAssignment?.instruction,
+        criteria
+      },
+      submittedText: text
+    })
+  ].join("\n");
+}
+
+function localTestAssignmentEvaluation(record, config, text, reason = null) {
+  const lower = String(text || "").toLowerCase();
+  const signals = [
+    "срок", "задач", "ответствен", "риск", "чек", "ссыл", "форм", "письм", "вебинар", "отчет", "продаж", "метрик"
+  ];
+  const hits = signals.filter(signal => lower.includes(signal)).length;
+  const score = Math.max(20, Math.min(85, 25 + hits * 5 + Math.min(20, Math.floor(String(text || "").length / 800))));
+  return {
+    mode: "local",
+    score,
+    summary: reason
+      ? `Автоматическая ИИ-оценка не выполнена: ${reason}. Выполнена локальная предварительная оценка по структуре текста.`
+      : "Локальная предварительная оценка по структуре текста.",
+    strengths: hits >= 6 ? ["в работе есть признаки структуры, сроков, рисков и проверок"] : ["есть выполненный материал, требуется ручной разбор"],
+    risks: hits < 6 ? ["мало явных признаков проектной структуры в тексте"] : [],
+    criteria: [],
+    recommendation: score >= 70 ? "пригласить на первое интервью" : score >= 55 ? "ручной разбор" : "отказ",
+    interviewQuestions: ["Попросить кандидата объяснить логику плана, приоритеты и работу с рисками."]
+  };
+}
+
+async function evaluateTestAssignment(record, config) {
+  const link = record.testAssignment?.link;
+  if (!link) throw new Error("Кандидат еще не прикрепил ссылку на результат тестового задания.");
+  const text = await fetchTestAssignmentText(link);
+  const prompt = testAssignmentPrompt(record, config, text);
+
+  if (AI_PROVIDER === "yandex" && YANDEX_GPT_API_KEY && YANDEX_FOLDER_ID) {
+    try {
+      const payload = {
+        modelUri: `gpt://${YANDEX_FOLDER_ID}/${YANDEX_GPT_MODEL}/latest`,
+        completionOptions: { stream: false, temperature: 0.2, maxTokens: 1800 },
+        messages: [
+          { role: "system", text: "Отвечай по-русски, кратко, прикладно. Верни только валидный JSON без Markdown." },
+          { role: "user", text: prompt }
+        ]
+      };
+      const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+        method: "POST",
+        headers: {
+          "Authorization": `Api-Key ${YANDEX_GPT_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const content = data.result?.alternatives?.[0]?.message?.text || "{}";
+      return { mode: "yandex", ...parseAiJson(content) };
+    } catch (error) {
+      return localTestAssignmentEvaluation(record, config, text, `YandexGPT вернул ошибку: ${error.message}`);
+    }
+  }
+
+  if (OPENAI_API_KEY) {
+    try {
+      const payload = {
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: "Отвечай по-русски, кратко, прикладно. Верни только валидный JSON без Markdown." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" }
+      };
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || "{}";
+      return { mode: "openai", ...parseAiJson(content) };
+    } catch (error) {
+      return localTestAssignmentEvaluation(record, config, text, `OpenAI вернул ошибку: ${error.message}`);
+    }
+  }
+
+  return localTestAssignmentEvaluation(record, config, text, "не настроен ключ YandexGPT/OpenAI");
+}
+
+function normalizeInterviewDraft(payload = {}) {
+  return {
+    status: payload.status || "draft",
+    interviewer: String(payload.interviewer || "").trim(),
+    interviewDate: String(payload.interviewDate || "").trim(),
+    scriptNotes: payload.scriptNotes && typeof payload.scriptNotes === "object" ? payload.scriptNotes : {},
+    scorecard: payload.scorecard && typeof payload.scorecard === "object" ? payload.scorecard : {},
+    cases: payload.cases && typeof payload.cases === "object" ? payload.cases : {},
+    decision: payload.decision && typeof payload.decision === "object" ? payload.decision : {},
+    savedAt: new Date().toISOString()
+  };
+}
+
+function interviewPrompt(record, config, interview) {
+  const methodology = config.interview || {};
+  return [
+    `Ты HR-эксперт. Оцени интервью кандидата на вакансию "${config.publicTitle || config.title}".`,
+    "Методология: структурированное интервью с проективными вопросами и кейсами. Нельзя решать по общему впечатлению, только по фактам, цитатам и оценкам интервьюера.",
+    "Верни строго JSON без Markdown: {score:number,summary:string,strengths:string[],risks:string[],competencyFindings:{title:string,score:number,comment:string}[],recommendation:string,nextSteps:string[],interviewQuestionsToClarify:string[]}.",
+    "score - итоговая оценка интервью от 0 до 100.",
+    "recommendation - одно короткое решение: двигать дальше / ручной разбор / отказ / резерв.",
+    JSON.stringify({
+      candidate: {
+        vacancyCode: record.vacancyCode,
+        questionnaireScore: record.score?.total,
+        questionnaireRecommendation: record.recommendation,
+        testEvaluation: record.testAssignment?.evaluation || null
+      },
+      methodology: {
+        principles: methodology.principles,
+        scorecard: methodology.scorecard,
+        decisionFields: methodology.decisionFields
+      },
+      interview
+    })
+  ].join("\n");
+}
+
+function localInterviewEvaluation(record, config, interview, reason = null) {
+  const entries = Object.values(interview.scorecard || {});
+  const scores = entries.map(item => Number(item.score || 0)).filter(value => value > 0);
+  const avg = scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : 0;
+  const score = scores.length ? Math.round((avg / 5) * 100) : 0;
+  const text = JSON.stringify(interview).toLowerCase();
+  const riskHints = ["не", "сомнен", "риск", "слаб", "конфликт", "хаос", "уходит", "нет данных"].filter(word => text.includes(word));
+  return {
+    mode: "local",
+    score,
+    summary: reason
+      ? `ИИ-оценка интервью не выполнена: ${reason}. Выполнена локальная оценка по выставленным баллам.`
+      : "Локальная оценка по баллам оценочного листа.",
+    strengths: score >= 70 ? ["по оценочному листу кандидат показывает достаточный уровень"] : [],
+    risks: riskHints.length ? ["в заметках есть маркеры риска, нужен ручной разбор"] : [],
+    competencyFindings: (config.interview?.scorecard || []).map(item => ({
+      title: item.title,
+      score: Number(interview.scorecard?.[item.id]?.score || 0),
+      comment: interview.scorecard?.[item.id]?.notes || ""
+    })),
+    recommendation: score >= 75 ? "двигать дальше" : score >= 55 ? "ручной разбор" : "отказ",
+    nextSteps: score >= 75 ? ["передать кандидата на следующий этап"] : ["провести ручную сверку фактов и рисков"],
+    interviewQuestionsToClarify: ["Уточнить спорные компетенции, где оценка ниже 4 или нет фактов в заметках."]
+  };
+}
+
+async function evaluateInterview(record, config, interview) {
+  const prompt = interviewPrompt(record, config, interview);
+
+  if (AI_PROVIDER === "yandex" && YANDEX_GPT_API_KEY && YANDEX_FOLDER_ID) {
+    try {
+      const payload = {
+        modelUri: `gpt://${YANDEX_FOLDER_ID}/${YANDEX_GPT_MODEL}/latest`,
+        completionOptions: { stream: false, temperature: 0.2, maxTokens: 1800 },
+        messages: [
+          { role: "system", text: "Отвечай по-русски, кратко, прикладно. Верни только валидный JSON без Markdown." },
+          { role: "user", text: prompt }
+        ]
+      };
+      const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+        method: "POST",
+        headers: {
+          "Authorization": `Api-Key ${YANDEX_GPT_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const content = data.result?.alternatives?.[0]?.message?.text || "{}";
+      return { mode: "yandex", ...parseAiJson(content) };
+    } catch (error) {
+      return localInterviewEvaluation(record, config, interview, `YandexGPT вернул ошибку: ${error.message}`);
+    }
+  }
+
+  if (OPENAI_API_KEY) {
+    try {
+      const payload = {
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: "Отвечай по-русски, кратко, прикладно. Верни только валидный JSON без Markdown." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" }
+      };
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || "{}";
+      return { mode: "openai", ...parseAiJson(content) };
+    } catch (error) {
+      return localInterviewEvaluation(record, config, interview, `OpenAI вернул ошибку: ${error.message}`);
+    }
+  }
+
+  return localInterviewEvaluation(record, config, interview, "не настроен ключ YandexGPT/OpenAI");
+}
+
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  const parts = url.pathname.split("/").filter(Boolean);
 
   if (req.method === "GET" && url.pathname === "/api/legal") {
     return sendJson(res, 200, { version: LEGAL_VERSION });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/telegram/webhook") {
+    if (!TELEGRAM_WEBHOOK_SECRET || url.searchParams.get("token") !== TELEGRAM_WEBHOOK_SECRET) {
+      return sendJson(res, 403, { error: "Forbidden" });
+    }
+    const payload = await readBody(req);
+    try {
+      const result = await processTelegramWebhook(payload);
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      insertAuditLog({
+        user: null,
+        action: "telegram.webhook.error",
+        targetType: "telegram_webhook",
+        targetId: String(payload?.update_id || ""),
+        payload: { error: error.message }
+      });
+      return sendJson(res, 500, { error: "Telegram webhook processing failed" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hh/webhook") {
+    if (!HH_WEBHOOK_SECRET || url.searchParams.get("token") !== HH_WEBHOOK_SECRET) {
+      return sendJson(res, 403, { error: "Forbidden" });
+    }
+    const payload = await readBody(req);
+    try {
+      const result = await processHhWebhookEvent(payload);
+      if (result.duplicate) return sendJson(res, 409, { ok: true, duplicate: true });
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      insertAuditLog({
+        user: null,
+        action: "hh.webhook.error",
+        targetType: "hh_webhook",
+        targetId: String(payload?.id || ""),
+        payload: { error: error.message, actionType: payload?.action_type || "" }
+      });
+      return sendJson(res, 500, { error: "Webhook processing failed" });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/uploads/resume") {
+    try {
+      const raw = await readRawBody(req);
+      const uploaded = parseMultipartFile(raw, req.headers["content-type"]);
+      const fileName = safeResumeFileName(uploaded.originalName);
+      await fs.mkdir(resumeUploadDir, { recursive: true });
+      await fs.writeFile(path.join(resumeUploadDir, fileName), uploaded.buffer);
+      return sendJson(res, 201, {
+        file: {
+          id: fileName,
+          originalName: uploaded.originalName,
+          mimeType: uploaded.mimeType,
+          size: uploaded.buffer.length,
+          url: `/api/admin/uploads/resumes/${encodeURIComponent(fileName)}`
+        }
+      });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message || "Не удалось загрузить файл." });
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/api/config") {
-    return sendJson(res, 200, { config: getQuestionnaireConfig() });
+    const baseConfig = getQuestionnaireConfig();
+    const vacancyCode = requestedVacancyCode(url, baseConfig.activeVacancyCode || "smm");
+    return sendJson(res, 200, {
+      config: getVacancyConfig(vacancyCode, baseConfig),
+      vacancyCode,
+      vacancies: getVacancies(baseConfig),
+      integrations: {
+        telegramBotUsername: TELEGRAM_BOT_USERNAME,
+        telegramAvailable: Boolean(TELEGRAM_BOT_USERNAME)
+      }
+    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/events") {
     const payload = await readBody(req);
     insertEvent({
       sessionId: payload.sessionId,
+      vacancyCode: payload.vacancyCode || requestedVacancyCode(url),
       eventType: payload.eventType,
       step: payload.step,
       payload: {
@@ -294,15 +1720,21 @@ async function handleApi(req, res) {
     if (!payload.consents?.privacy || !payload.consents?.dataProcessing) {
       return sendJson(res, 400, { error: "Both legal consents are required" });
     }
-    const config = getQuestionnaireConfig();
+    const baseConfig = getQuestionnaireConfig();
+    const vacancyCode = String(payload.vacancyCode || payload.answers?.vacancyCode || baseConfig.activeVacancyCode || "smm");
+    const config = getVacancyConfig(vacancyCode, baseConfig);
     const scored = scoreSubmission(payload, config);
     const consentTimestamp = new Date().toISOString();
     const forwardedFor = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
     const record = {
       id: crypto.randomUUID(),
+      vacancyCode,
       submittedAt: consentTimestamp,
       candidate: scored.candidate,
-      answers: scored.answers,
+      answers: {
+        ...scored.answers,
+        vacancyCode
+      },
       consents: {
         privacy: {
           accepted: true,
@@ -340,19 +1772,25 @@ async function handleApi(req, res) {
       assignedAt: eligible ? consentTimestamp : null
     };
     insertSubmission(record);
+    queueCandidateEmailAsync(record, eligible ? "test_assignment_invite" : "questionnaire_completed", {
+      source: "questionnaire_submission",
+      recommendation: record.recommendation?.code || "",
+      score: record.score?.total ?? null
+    });
     return sendJson(res, 201, {
       id: record.id,
       score: record.score,
       recommendation: record.recommendation,
       nextStep: {
         testAssignmentEligible: eligible,
-        testAssignmentUrl: eligible ? `/#test/${record.id}` : null
+        testAssignmentUrl: eligible ? `/v/${encodeURIComponent(vacancyCode)}#test/${record.id}` : null,
+        telegramBotUrl: telegramBotDeepLink(record.id)
       }
     });
   }
 
-  if (req.method === "POST" && url.pathname.match(/^\/api\/submissions\/[^/]+\/test-assignment$/)) {
-    const id = url.pathname.split("/")[3];
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "submissions" && parts[3] === "test-assignment" && parts.length === 4) {
+    const id = parts[2];
     const payload = await readBody(req);
     const testLink = String(payload.testLink || "").trim();
     if (!/^https:\/\/(docs\.google\.com|drive\.google\.com)\//i.test(testLink)) {
@@ -367,6 +1805,26 @@ async function handleApi(req, res) {
       link: testLink,
       submittedAt: new Date().toISOString()
     });
+    queueCandidateEmailAsync(updated, "test_assignment_received", {
+      source: "test_assignment_submission",
+      link: testLink
+    });
+    return sendJson(res, 200, { ok: true, testAssignment: updated.testAssignment });
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "submissions" && parts[3] === "test-assignment" && parts[4] === "viewed") {
+    const id = parts[2];
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Submission not found" });
+    if (!record.testAssignment?.eligible) return sendJson(res, 403, { error: "Test assignment is not available for this submission" });
+    if (["submitted", "evaluated"].includes(record.testAssignment.status)) {
+      return sendJson(res, 200, { ok: true, testAssignment: record.testAssignment });
+    }
+    const updated = updateTestAssignment(id, {
+      ...record.testAssignment,
+      status: "issued",
+      issuedAt: record.testAssignment.issuedAt || new Date().toISOString()
+    });
     return sendJson(res, 200, { ok: true, testAssignment: updated.testAssignment });
   }
 
@@ -375,6 +1833,7 @@ async function handleApi(req, res) {
     const user = authenticate(payload.username || "", payload.password || "");
     if (!user) return sendJson(res, 401, { error: "Invalid credentials" });
     const session = createSession(user.id);
+    insertAuditLog({ user, action: "auth.login", targetType: "user", targetId: user.id });
     return sendJson(res, 200, { user }, {
       "Set-Cookie": cookieHeader("hr_session", session.token, { expires: session.expiresAt })
     });
@@ -383,50 +1842,575 @@ async function handleApi(req, res) {
   if (req.method === "GET" && url.pathname === "/api/auth/me") {
     const session = getSession(req);
     if (!session) return sendJson(res, 401, { error: "Unauthorized" });
-    return sendJson(res, 200, { user: { username: session.username, role: session.role } });
+    return sendJson(res, 200, { user: publicSessionUser(session) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+    const session = getSession(req);
     const token = parseCookies(req).hr_session;
     deleteSession(token);
+    if (session) insertAuditLog({ user: session, action: "auth.logout", targetType: "user", targetId: session.userId });
     return sendJson(res, 200, { ok: true }, {
       "Set-Cookie": cookieHeader("hr_session", "", { maxAge: 0 })
     });
   }
 
-  if (url.pathname.startsWith("/api/admin/") && !requireAdmin(req, res)) return;
+  if (req.method === "GET" && url.pathname === "/api/hh/oauth/callback") {
+    const session = getSession(req);
+    if (!session) {
+      res.writeHead(302, { Location: "/#admin" });
+      return res.end();
+    }
+    if (!(session.role === "owner" || session.role === "hr")) {
+      res.writeHead(302, { Location: "/#admin?hh=forbidden" });
+      return res.end();
+    }
+    if (!hhConfigured()) {
+      res.writeHead(302, { Location: "/#admin?hh=not_configured" });
+      return res.end();
+    }
+    const code = url.searchParams.get("code");
+    if (!code) {
+      res.writeHead(302, { Location: "/#admin?hh=no_code" });
+      return res.end();
+    }
+    try {
+      const tokenData = await hhTokenRequest({
+        grant_type: "authorization_code",
+        client_id: HH_CLIENT_ID,
+        client_secret: HH_CLIENT_SECRET,
+        redirect_uri: HH_REDIRECT_URI,
+        code
+      });
+      saveHhIntegrationAccount({
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+        expiresAt: hhTokenExpiresAt(tokenData),
+        status: "connected"
+      });
+      const me = await hhApi("/me").catch(error => ({ error: error.message }));
+      saveHhIntegrationAccount({ me, status: "connected" });
+      insertAuditLog({ user: session, action: "hh.oauth.connected", targetType: "integration", targetId: "headhunter" });
+      res.writeHead(302, { Location: "/#admin/hh" });
+      return res.end();
+    } catch (error) {
+      res.writeHead(302, { Location: `/#admin/hh?error=${encodeURIComponent(error.message)}` });
+      return res.end();
+    }
+  }
+
+  const adminSession = url.pathname.startsWith("/api/admin/") ? requireAdmin(req, res) : null;
+  if (url.pathname.startsWith("/api/admin/") && !adminSession) return;
+
+  if (req.method === "GET" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "uploads" && parts[3] === "resumes" && parts[4]) {
+    const fileName = path.basename(decodeURIComponent(parts[4]));
+    const ext = path.extname(fileName).toLowerCase();
+    if (!ALLOWED_RESUME_EXTENSIONS.has(ext)) return sendJson(res, 400, { error: "Unsupported file type" });
+    const filePath = path.join(resumeUploadDir, fileName);
+    try {
+      const file = await fs.readFile(filePath);
+      res.writeHead(200, {
+        "Content-Type": mime[ext] || "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
+        "Cache-Control": "private, no-store"
+      });
+      return res.end(file);
+    } catch {
+      return sendJson(res, 404, { error: "Файл не найден." });
+    }
+  }
 
   if (req.method === "GET" && url.pathname === "/api/admin/submissions") {
-    return sendJson(res, 200, { submissions: listSubmissions().map(publicCandidate) });
+    const baseConfig = getQuestionnaireConfig();
+    const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
+    const requestedVacancy = url.searchParams.get("vacancy");
+    const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
+    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
+    return sendJson(res, 200, { vacancyCode, submissions: submissions.map(publicCandidate) });
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "submissions" && parts[4] === "test-assignment" && parts[5] === "evaluate") {
+    const id = parts[3];
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Not found" });
+    if (!canWriteVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на оценку тестового по этой вакансии." });
+    if (!record.testAssignment?.link) {
+      return sendJson(res, 400, { error: "Кандидат еще не прикрепил ссылку на результат тестового задания." });
+    }
+    const baseConfig = getQuestionnaireConfig();
+    const config = getVacancyConfig(record.vacancyCode, baseConfig);
+    const evaluation = await evaluateTestAssignment(record, config);
+    const normalizedEvaluation = {
+      ...evaluation,
+      score: Math.max(0, Math.min(100, Math.round(Number(evaluation.score || 0)))),
+      evaluatedAt: new Date().toISOString()
+    };
+    const updated = updateTestAssignment(id, {
+      ...record.testAssignment,
+      status: "evaluated",
+      evaluation: normalizedEvaluation
+    });
+    insertAuditLog({
+      user: adminSession,
+      action: "test_assignment.evaluate",
+      targetType: "submission",
+      targetId: id,
+      vacancyCode: record.vacancyCode,
+      payload: { score: normalizedEvaluation.score }
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      submission: publicCandidate(updated)
+    });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "submissions" && parts[4] === "test-assignment" && parts[5] === "manual-review") {
+    const id = parts[3];
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Not found" });
+    if (!canManageVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    if (!record.testAssignment?.link) {
+      return sendJson(res, 400, { error: "Кандидат еще не прикрепил ссылку на результат тестового задания." });
+    }
+    const payload = await readBody(req);
+    const score = normalizeScore(payload.score);
+    const manualReview = {
+      score,
+      decision: String(payload.decision || "").trim(),
+      comment: String(payload.comment || "").trim(),
+      reviewer: adminSession.displayName || adminSession.username,
+      reviewerUsername: adminSession.username,
+      reviewedAt: new Date().toISOString()
+    };
+    const currentStatus = record.testAssignment.status || "submitted";
+    const updated = updateTestAssignment(id, {
+      ...record.testAssignment,
+      status: currentStatus === "evaluated" ? "evaluated" : "manual_reviewed",
+      manualReview
+    });
+    insertAuditLog({
+      user: adminSession,
+      action: "test_assignment.manual_review",
+      targetType: "submission",
+      targetId: id,
+      vacancyCode: record.vacancyCode,
+      payload: { score, decision: manualReview.decision }
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      submission: publicCandidate(updated)
+    });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "submissions" && parts[4] === "interview") {
+    const id = parts[3];
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Not found" });
+    if (!canManageVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    const payload = await readBody(req);
+    const draft = normalizeInterviewDraft(payload.interview || payload || {});
+    const updated = updateInterview(id, {
+      ...draft,
+      status: draft.status || "draft"
+    });
+    insertAuditLog({
+      user: adminSession,
+      action: "interview.save",
+      targetType: "submission",
+      targetId: id,
+      vacancyCode: record.vacancyCode,
+      payload: { interviewer: draft.interviewer || "" }
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      submission: publicCandidate(updated)
+    });
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "submissions" && parts[4] === "interview" && parts[5] === "evaluate") {
+    const id = parts[3];
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Not found" });
+    if (!canWriteVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на оценку интервью по этой вакансии." });
+    const payload = await readBody(req);
+    const interview = payload.interview ? normalizeInterviewDraft(payload.interview) : normalizeInterviewDraft(record.interview || {});
+    const hasEvidence = Object.keys(interview.scorecard || {}).length || Object.keys(interview.cases || {}).length || Object.keys(interview.scriptNotes || {}).length;
+    if (!hasEvidence) return sendJson(res, 400, { error: "Сначала заполните хотя бы часть оценочного листа или заметок интервью." });
+    const baseConfig = getQuestionnaireConfig();
+    const config = getVacancyConfig(record.vacancyCode, baseConfig);
+    const evaluation = await evaluateInterview(record, config, interview);
+    const normalizedEvaluation = {
+      ...evaluation,
+      score: Math.max(0, Math.min(100, Math.round(Number(evaluation.score || 0)))),
+      evaluatedAt: new Date().toISOString()
+    };
+    const updated = updateInterview(id, {
+      ...interview,
+      status: "evaluated",
+      evaluation: normalizedEvaluation,
+      evaluatedAt: normalizedEvaluation.evaluatedAt
+    });
+    insertAuditLog({
+      user: adminSession,
+      action: "interview.evaluate",
+      targetType: "submission",
+      targetId: id,
+      vacancyCode: record.vacancyCode,
+      payload: { score: normalizedEvaluation.score }
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      submission: publicCandidate(updated)
+    });
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/api/admin/submissions/")) {
     const id = url.pathname.split("/").pop();
     const record = getSubmission(id);
     if (!record) return sendJson(res, 404, { error: "Not found" });
-    return sendJson(res, 200, { submission: record });
+    if (!canManageVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    return sendJson(res, 200, { submission: publicCandidate(record) });
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/admin/submissions/")) {
+    const id = url.pathname.split("/").pop();
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Not found" });
+    if (!canWriteVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на удаление кандидата по этой вакансии." });
+    const deleted = deleteSubmission(id);
+    if (!deleted) return sendJson(res, 404, { error: "Not found" });
+    insertAuditLog({
+      user: adminSession,
+      action: "submission.delete",
+      targetType: "submission",
+      targetId: id,
+      vacancyCode: record.vacancyCode,
+      payload: { candidate: record.candidate?.fullName || "" }
+    });
+    return sendJson(res, 200, { ok: true });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/analytics") {
-    const analytics = buildFlowAnalytics(listSubmissions(), listEvents());
-    return sendJson(res, 200, { analytics });
+    const baseConfig = getQuestionnaireConfig();
+    const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
+    const requestedVacancy = url.searchParams.get("vacancy");
+    const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
+    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
+    const events = vacancyCode ? listEvents().filter(event => event.vacancyCode === vacancyCode) : listEvents();
+    const analytics = buildFlowAnalytics(submissions, events);
+    return sendJson(res, 200, { vacancyCode, analytics });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/config") {
-    return sendJson(res, 200, { config: getQuestionnaireConfig() });
+    const config = getQuestionnaireConfig();
+    const visible = visibleVacancies(adminSession, config);
+    const visibleConfig = adminSession.role === "owner" || adminSession.role === "hr"
+      ? config
+      : {
+        ...config,
+        vacancies: Object.fromEntries(Object.keys(visible).map(code => [code, config.vacancies?.[code]]).filter(([, value]) => Boolean(value)))
+      };
+    return sendJson(res, 200, { config: visibleConfig, vacancies: visible });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/hiring-requests") {
+    return sendJson(res, 200, {
+      requests: filterByVacancyAccess(adminSession, listHiringRequests(), item => item.vacancyCode)
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/hiring-requests") {
+    const payload = await readBody(req);
+    const vacancyCode = payload.vacancyCode || "";
+    if (vacancyCode && !canManageVacancy(adminSession, vacancyCode)) {
+      return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    }
+    const request = createHiringRequest({
+      createdByUserId: adminSession.userId,
+      createdByUsername: adminSession.username,
+      requestType: payload.requestType || (vacancyCode ? "start_existing" : "new_vacancy"),
+      vacancyCode,
+      title: payload.title || vacancyLabelFromConfig(vacancyCode) || "Новая заявка",
+      reason: payload.reason,
+      urgency: payload.urgency,
+      desiredStartDate: payload.desiredStartDate,
+      headcount: payload.headcount,
+      status: "new",
+      payload: {
+        responsibilities: payload.responsibilities || "",
+        expectedResult: payload.expectedResult || "",
+        budget: payload.budget || "",
+        comment: payload.comment || ""
+      }
+    });
+    insertAuditLog({ user: adminSession, action: "hiring_request.create", targetType: "hiring_request", targetId: request.id, vacancyCode: request.vacancyCode || "" });
+    return sendJson(res, 201, { request });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "hiring-requests" && parts[3]) {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Менять статус заявки может только владелец или HR." });
+    const payload = await readBody(req);
+    const request = updateHiringRequest(parts[3], payload);
+    if (!request) return sendJson(res, 404, { error: "Заявка не найдена." });
+    insertAuditLog({ user: adminSession, action: "hiring_request.update", targetType: "hiring_request", targetId: request.id, vacancyCode: request.vacancyCode || "", payload: { status: request.status } });
+    return sendJson(res, 200, { request });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/vacancy-openings") {
+    return sendJson(res, 200, {
+      openings: filterByVacancyAccess(adminSession, listVacancyOpenings(), item => item.vacancyCode)
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/vacancy-openings") {
+    const payload = await readBody(req);
+    const vacancyCode = String(payload.vacancyCode || "").trim();
+    const recruitmentChannels = Array.isArray(payload.recruitmentChannels)
+      ? payload.recruitmentChannels.filter(channel => ["hh", "telegram"].includes(channel))
+      : ["hh"];
+    if (!vacancyCode) return sendJson(res, 400, { error: "Выберите вакансию." });
+    if (!recruitmentChannels.length) return sendJson(res, 400, { error: "Выберите хотя бы один канал подбора." });
+    if (!canManageVacancy(adminSession, vacancyCode)) return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    let opening = createVacancyOpening({
+      vacancyCode,
+      title: payload.title || vacancyLabelFromConfig(vacancyCode),
+      hiringManagerUserId: adminSession.role === "hiring_manager" ? adminSession.userId : payload.hiringManagerUserId,
+      hiringManagerUsername: adminSession.role === "hiring_manager" ? adminSession.username : payload.hiringManagerUsername,
+      hrOwnerUserId: adminSession.role === "hr" ? adminSession.userId : null,
+      hrOwnerUsername: adminSession.role === "hr" ? adminSession.username : "",
+      requestId: payload.requestId,
+      reason: payload.reason,
+      status: "draft",
+      payload: {
+        headcount: payload.headcount || 1,
+        desiredStartDate: payload.desiredStartDate || "",
+        urgency: payload.urgency || "normal",
+        recruitmentChannels,
+        telegramDrafts: recruitmentChannels.includes("telegram") ? buildTelegramDrafts(vacancyCode, { title: payload.title || vacancyLabelFromConfig(vacancyCode) }) : null
+      }
+    });
+    if (recruitmentChannels.includes("hh")) {
+      const text = createHhVacancyText({
+        vacancyCode,
+        openingId: opening.id,
+        title: opening.title,
+        body: buildHeadHunterDraft(vacancyCode, opening),
+        status: "draft",
+        payload: { source: "vacancy_opening", autoCreated: true }
+      });
+      opening = updateVacancyOpening(opening.id, { hhTextId: text.id });
+    }
+    insertAuditLog({ user: adminSession, action: "vacancy_opening.create", targetType: "vacancy_opening", targetId: opening.id, vacancyCode });
+    return sendJson(res, 201, { opening });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "vacancy-openings" && parts[3]) {
+    const current = getVacancyOpening(parts[3]);
+    if (!current) return sendJson(res, 404, { error: "Запуск подбора не найден." });
+    if (!canManageVacancy(adminSession, current.vacancyCode)) return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    const payload = await readBody(req);
+    const opening = updateVacancyOpening(parts[3], payload);
+    insertAuditLog({ user: adminSession, action: "vacancy_opening.update", targetType: "vacancy_opening", targetId: opening.id, vacancyCode: opening.vacancyCode, payload: { status: opening.status } });
+    return sendJson(res, 200, { opening });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/hh-texts") {
+    return sendJson(res, 200, {
+      texts: filterByVacancyAccess(adminSession, listHhVacancyTexts(), item => item.vacancyCode)
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/hh-texts") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Текст HeadHunter создает HR или владелец." });
+    const payload = await readBody(req);
+    const vacancyCode = String(payload.vacancyCode || "").trim();
+    if (!vacancyCode) return sendJson(res, 400, { error: "Выберите вакансию." });
+    if (!canWriteVacancy(adminSession, vacancyCode)) return sendJson(res, 403, { error: "Нет прав на эту вакансию." });
+    const opening = payload.openingId ? getVacancyOpening(payload.openingId) : null;
+    const text = createHhVacancyText({
+      vacancyCode,
+      openingId: payload.openingId || null,
+      title: payload.title || vacancyLabelFromConfig(vacancyCode),
+      body: payload.body || buildHeadHunterDraft(vacancyCode, opening),
+      status: "draft",
+      payload: { questionnaireLink: `https://hr.academy-management.ru/v/${encodeURIComponent(vacancyCode)}?source=headhunter` }
+    });
+    if (opening) updateVacancyOpening(opening.id, { hhTextId: text.id });
+    insertAuditLog({ user: adminSession, action: "hh_text.create", targetType: "hh_text", targetId: text.id, vacancyCode });
+    return sendJson(res, 201, { text });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/hh-publications") {
+    return sendJson(res, 200, {
+      publications: filterByVacancyAccess(adminSession, listHhPublications(), item => item.vacancyCode)
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/hh/status") {
+    const account = getHhIntegrationAccount();
+    return sendJson(res, 200, {
+      configured: hhConfigured(),
+      redirectUri: HH_REDIRECT_URI,
+      userAgent: HH_USER_AGENT,
+      webhookConfigured: Boolean(HH_WEBHOOK_URL),
+      webhook: account?.me?.webhook || null,
+      account: publicHhAccount(account)
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/hh/webhook/setup") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Webhook HeadHunter настраивает HR или владелец." });
+    if (!hhConfigured()) return sendJson(res, 400, { error: "HeadHunter API не настроен." });
+    try {
+      const webhook = await ensureHhWebhookSubscription();
+      insertAuditLog({ user: adminSession, action: "hh.webhook.setup", targetType: "integration", targetId: "headhunter", payload: { configured: webhook.configured, subscriptionId: webhook.subscriptionId } });
+      return sendJson(res, 200, { webhook });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message || "Не удалось настроить webhook HeadHunter." });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/hh/oauth-url") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "HeadHunter подключает HR или владелец." });
+    if (!hhConfigured()) return sendJson(res, 400, { error: "Не заданы HH_CLIENT_ID, HH_CLIENT_SECRET или HH_REDIRECT_URI." });
+    return sendJson(res, 200, { url: hhOAuthUrl(adminSession), redirectUri: HH_REDIRECT_URI });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/hh/disconnect") {
+    if (!requireOwner(adminSession, res)) return;
+    const account = disconnectHhIntegrationAccount();
+    insertAuditLog({ user: adminSession, action: "hh.oauth.disconnect", targetType: "integration", targetId: "headhunter" });
+    return sendJson(res, 200, { account: publicHhAccount(account) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/hh/responses") {
+    return sendJson(res, 200, {
+      responses: filterByVacancyAccess(adminSession, listHhResponses(), item => item.vacancyCode)
+    });
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "hh" && parts[3] === "publications" && parts[5] === "sync-responses") {
+    const publication = getHhPublication(parts[4]);
+    if (!publication) return sendJson(res, 404, { error: "Публикация не найдена." });
+    if (!canWriteVacancy(adminSession, publication.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на эту вакансию." });
+    if (!publication.hhVacancyId) return sendJson(res, 400, { error: "У публикации нет ID вакансии HeadHunter." });
+    const result = await syncHhPublicationResponses(publication);
+    const responses = result.responses;
+    insertAuditLog({ user: adminSession, action: "hh.responses.sync", targetType: "hh_publication", targetId: publication.id, vacancyCode: publication.vacancyCode, payload: { count: responses.length } });
+    return sendJson(res, 200, { responses, found: result.found });
+  }
+
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "hh" && parts[3] === "responses" && parts[5] === "send-questionnaire") {
+    const responseItem = getHhResponse(parts[4]);
+    if (!responseItem) return sendJson(res, 404, { error: "Отклик не найден." });
+    if (!canWriteVacancy(adminSession, responseItem.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на эту вакансию." });
+    if (responseItem.questionnaireSent) return sendJson(res, 409, { error: "Ссылка уже отправлена этому кандидату." });
+    const message = hhQuestionnaireMessage(responseItem);
+    const data = await hhApi(`/negotiations/${encodeURIComponent(responseItem.negotiationId)}/messages`, {
+      method: "POST",
+      body: { message }
+    });
+    const updated = markHhQuestionnaireSent(responseItem.id, message, data);
+    insertAuditLog({ user: adminSession, action: "hh.questionnaire.send", targetType: "hh_response", targetId: responseItem.id, vacancyCode: responseItem.vacancyCode });
+    return sendJson(res, 200, { response: updated });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/hh-publications") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Публикацию создает HR или владелец." });
+    const payload = await readBody(req);
+    const vacancyCode = String(payload.vacancyCode || "").trim();
+    if (!vacancyCode) return sendJson(res, 400, { error: "Выберите вакансию." });
+    if (!canWriteVacancy(adminSession, vacancyCode)) return sendJson(res, 403, { error: "Нет прав на эту вакансию." });
+    const publication = createHhPublication({
+      vacancyCode,
+      openingId: payload.openingId || null,
+      hhTextId: payload.hhTextId || null,
+      hhVacancyId: payload.hhVacancyId || "",
+      url: payload.url || "",
+      status: payload.status || "manual_ready",
+      payload: { mode: "manual_first", note: payload.note || "Готово для ручной публикации на HeadHunter" }
+    });
+    if (payload.openingId) updateVacancyOpening(payload.openingId, { hhPublicationId: publication.id, status: "publication_ready" });
+    insertAuditLog({ user: adminSession, action: "hh_publication.create", targetType: "hh_publication", targetId: publication.id, vacancyCode, payload: { status: publication.status } });
+    return sendJson(res, 201, { publication });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "hh-publications" && parts[3]) {
+    const current = getHhPublication(parts[3]);
+    if (!current) return sendJson(res, 404, { error: "Публикация не найдена." });
+    if (!canWriteVacancy(adminSession, current.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на эту вакансию." });
+    const payload = await readBody(req);
+    const publication = updateHhPublication(parts[3], {
+      hhVacancyId: payload.hhVacancyId ?? current.hhVacancyId,
+      url: payload.url ?? current.url,
+      status: payload.status ?? current.status,
+      publishedAt: payload.publishedAt ?? current.publishedAt
+    });
+    insertAuditLog({ user: adminSession, action: "hh_publication.update", targetType: "hh_publication", targetId: publication.id, vacancyCode: publication.vacancyCode, payload: { hhVacancyId: publication.hhVacancyId, status: publication.status } });
+    return sendJson(res, 200, { publication });
   }
 
   if (req.method === "PUT" && url.pathname === "/api/admin/config") {
+    if (!requireOwner(adminSession, res)) return;
     const payload = await readBody(req);
     const config = saveQuestionnaireConfig(payload.config);
+    insertAuditLog({ user: adminSession, action: "config.update", targetType: "config", targetId: "questionnaire" });
     return sendJson(res, 200, { config });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/ai-insights") {
-    const submissions = listSubmissions();
-    const analytics = buildFlowAnalytics(submissions, listEvents());
+    const baseConfig = getQuestionnaireConfig();
+    const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
+    const requestedVacancy = url.searchParams.get("vacancy");
+    const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
+    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
+    const events = vacancyCode ? listEvents().filter(event => event.vacancyCode === vacancyCode) : listEvents();
+    const analytics = buildFlowAnalytics(submissions, events);
     const insights = await generateAiInsights(submissions, analytics);
+    insertAuditLog({ user: adminSession, action: "analytics.ai_insights", targetType: "vacancy", targetId: vacancyCode, vacancyCode });
     return sendJson(res, 200, { insights });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/users") {
+    if (!requireOwner(adminSession, res)) return;
+    return sendJson(res, 200, { users: listUsers() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/users") {
+    if (!requireOwner(adminSession, res)) return;
+    const payload = await readBody(req);
+    const user = createUser(payload);
+    insertAuditLog({
+      user: adminSession,
+      action: "user.create",
+      targetType: "user",
+      targetId: user.id,
+      payload: { username: user.username, role: user.role, vacancyAccess: user.vacancyAccess }
+    });
+    return sendJson(res, 201, { user });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "users" && parts[3]) {
+    if (!requireOwner(adminSession, res)) return;
+    const payload = await readBody(req);
+    const user = updateUser(parts[3], payload);
+    if (!user) return sendJson(res, 404, { error: "Пользователь не найден." });
+    insertAuditLog({
+      user: adminSession,
+      action: "user.update",
+      targetType: "user",
+      targetId: user.id,
+      payload: { username: user.username, role: user.role, vacancyAccess: user.vacancyAccess, active: user.active }
+    });
+    return sendJson(res, 200, { user });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/audit") {
+    if (!requireOwner(adminSession, res)) return;
+    return sendJson(res, 200, { logs: listAuditLogs(url.searchParams.get("limit") || 200) });
   }
 
   return sendJson(res, 404, { error: "API route not found" });
@@ -445,11 +2429,11 @@ async function serveStatic(req, res) {
   try {
     const file = await fs.readFile(filePath);
     const ext = path.extname(filePath);
-    res.writeHead(200, { "Content-Type": mime[ext] || "application/octet-stream" });
+    res.writeHead(200, staticHeaders(ext));
     res.end(file);
   } catch {
     const fallback = await fs.readFile(path.join(publicDir, "index.html"));
-    res.writeHead(200, { "Content-Type": mime[".html"] });
+    res.writeHead(200, staticHeaders(".html"));
     res.end(fallback);
   }
 }
@@ -466,7 +2450,14 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-initDb({ adminUsername: ADMIN_USERNAME, adminPassword: ADMIN_PASSWORD, resetAdminPassword: ADMIN_PASSWORD_RESET }).then(() => {
+initDb({
+  adminUsername: ADMIN_USERNAME,
+  adminPassword: ADMIN_PASSWORD,
+  resetAdminPassword: ADMIN_PASSWORD_RESET,
+  hrUsername: HR_USERNAME,
+  hrPassword: HR_PASSWORD,
+  resetHrPassword: HR_PASSWORD_RESET
+}).then(() => {
   server.listen(PORT, () => {
     console.log(`HR SMM Screening app: http://localhost:${PORT}`);
     console.log(`Admin login: ${ADMIN_USERNAME}`);
