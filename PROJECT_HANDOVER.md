@@ -822,6 +822,7 @@ Bug report должен содержать:
 - [ ] `README.md`;
 - [ ] `DEPLOYMENT.md`;
 - [ ] `SECURITY.md`;
+- [ ] `docs/SECRET_HANDOFF_LOCKBOX.md`;
 - [ ] `HR_GUIDE.md`;
 - [ ] `docs/HR_Screening_User_Guide.pdf`;
 - [ ] последнюю production-базу или инструкцию доступа к ней;
