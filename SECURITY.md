@@ -14,6 +14,17 @@ Never commit:
 
 Use `.env.example` only as a template.
 
+Current production secret locations:
+
+```text
+/etc/hr-screening/app.env
+/etc/academy-ai-relay/app.env
+```
+
+These files may be inspected only by engineers with production SSH access. Do
+not paste their contents into GitHub, Bitrix24, Telegram, email, screenshots, or
+documentation.
+
 ## Admin access
 
 Admin sessions use HttpOnly cookies. In production `NODE_ENV=production` must be set so cookies are marked `Secure`.

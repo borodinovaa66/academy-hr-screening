@@ -22,6 +22,34 @@ Production env file:
 /etc/hr-screening/app.env
 ```
 
+The production `.env` file is stored outside the Git repository and is read by
+`hr-screening.service`. Developers who receive production SSH access can inspect
+it on the server:
+
+```bash
+ssh ubuntu@93.77.178.9
+sudo cat /etc/hr-screening/app.env
+```
+
+Do not copy this file into the repository, Bitrix24, Telegram, GitHub issues, or
+ordinary email. If a developer needs local integration testing, copy only the
+specific variables required for that local test into a local `.env` file that is
+ignored by Git.
+
+Related production secret/config files:
+
+```bash
+/etc/hr-screening/app.env          # HR Screening application
+/etc/academy-ai-relay/app.env      # Bitrix24 AI relay / developer bot
+```
+
+Production application directories:
+
+```bash
+/opt/hr-screening                  # HR Screening app code and SQLite data
+/opt/academy-ai-relay              # Bitrix24 AI relay service
+```
+
 Required variables:
 
 ```bash
