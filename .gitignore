@@ -16,6 +16,7 @@ deploy-*.tgz
 # Local tunnels and generated previews
 tools/
 screenshots/
+output/
 tmp-*.png
 Исходные материалы/
 
