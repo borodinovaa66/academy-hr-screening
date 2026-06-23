@@ -7,6 +7,8 @@ const tls = require("tls");
 const { scoreSubmission, buildFlowAnalytics } = require("./src/scoring");
 const {
   initDb,
+  getConfig,
+  saveConfig,
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
   listUsers,
@@ -94,6 +96,10 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_BOT_USERNAME = String(process.env.TELEGRAM_BOT_USERNAME || "").replace(/^@/, "");
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || "";
 const TELEGRAM_WEBHOOK_URL = process.env.TELEGRAM_WEBHOOK_URL || (TELEGRAM_WEBHOOK_SECRET ? `${APP_PUBLIC_URL}/api/telegram/webhook?token=${encodeURIComponent(TELEGRAM_WEBHOOK_SECRET)}` : "");
+const BITRIX_WEBHOOK_BASE = String(process.env.BITRIX_WEBHOOK_BASE || "").replace(/\/+$/, "");
+const BITRIX_BOT_ID = process.env.BITRIX_BOT_ID || "";
+const BITRIX_CLIENT_ID = process.env.BITRIX_CLIENT_ID || "";
+const BITRIX_DEFAULT_DIALOG_ID = process.env.BITRIX_NOTIFY_DIALOG_ID || "";
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
   personalDataConsent: "personal_data_consent_v2"
@@ -392,6 +398,146 @@ async function queueCandidateEmail(record, eventType, payload = {}) {
 function queueCandidateEmailAsync(record, eventType, payload = {}) {
   queueCandidateEmail(record, eventType, payload).catch(error => {
     console.error("Email communication failed", error);
+  });
+}
+
+const DEFAULT_BITRIX_NOTIFICATION_SETTINGS = {
+  enabled: false,
+  provider: "im",
+  dialogId: BITRIX_DEFAULT_DIALOG_ID,
+  events: {
+    questionnaireSubmitted: true,
+    testAssignmentSubmitted: true,
+    testAssignmentOverdue: false,
+    interviewRecommended: true
+  }
+};
+
+function getBitrixNotificationSettings() {
+  const saved = getConfig("bitrixNotifications", {});
+  return {
+    ...DEFAULT_BITRIX_NOTIFICATION_SETTINGS,
+    ...saved,
+    events: {
+      ...DEFAULT_BITRIX_NOTIFICATION_SETTINGS.events,
+      ...(saved.events || {})
+    },
+    dialogId: saved.dialogId || BITRIX_DEFAULT_DIALOG_ID || "",
+    provider: saved.provider || DEFAULT_BITRIX_NOTIFICATION_SETTINGS.provider
+  };
+}
+
+function publicBitrixNotificationStatus() {
+  const settings = getBitrixNotificationSettings();
+  return {
+    configured: Boolean(BITRIX_WEBHOOK_BASE),
+    enabled: Boolean(settings.enabled),
+    provider: settings.provider,
+    dialogId: settings.dialogId,
+    hasBot: Boolean(BITRIX_BOT_ID),
+    events: settings.events
+  };
+}
+
+function normalizeBitrixNotificationSettings(payload = {}) {
+  const current = getBitrixNotificationSettings();
+  const provider = ["im", "imbot"].includes(payload.provider) ? payload.provider : current.provider;
+  return {
+    enabled: Boolean(payload.enabled),
+    provider,
+    dialogId: String(payload.dialogId || "").trim(),
+    events: {
+      ...current.events,
+      ...(payload.events || {})
+    }
+  };
+}
+
+async function bitrixRest(method, payload = {}) {
+  if (!BITRIX_WEBHOOK_BASE) throw new Error("BITRIX_WEBHOOK_BASE_NOT_CONFIGURED");
+  const response = await fetch(`${BITRIX_WEBHOOK_BASE}/${method}.json`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.error) {
+    throw new Error(data.error_description || data.error || `Bitrix24 API HTTP ${response.status}`);
+  }
+  return data;
+}
+
+function bitrixCandidateUrl(record) {
+  const vacancy = encodeURIComponent(record.vacancyCode || "smm");
+  return `${APP_PUBLIC_URL}/#admin/${vacancy}/candidates`;
+}
+
+function bitrixCandidateMessage(record, eventType) {
+  const candidateName = [record.candidate?.firstName, record.candidate?.lastName].filter(Boolean).join(" ") || record.candidate?.fullName || "Кандидат";
+  const vacancyTitle = vacancyLabelFromConfig(record.vacancyCode);
+  const score = Number.isFinite(Number(record.score?.total)) ? `${Math.round(Number(record.score.total))}/100` : "нет оценки";
+  const status = record.recommendation?.label || record.recommendation?.code || "нет статуса";
+  const action = eventType === "test_assignment_submitted"
+    ? "прикрепил(а) тестовое задание"
+    : "заполнил(а) анкету";
+  return [
+    `[B]Новый шаг по кандидату[/B]`,
+    "",
+    `${candidateName} ${action}.`,
+    `Вакансия: ${vacancyTitle}`,
+    `Оценка анкеты: ${score}`,
+    `Статус: ${status}`,
+    "",
+    `[URL=${bitrixCandidateUrl(record)}]Открыть кандидатов на платформе[/URL]`
+  ].join("\n");
+}
+
+async function sendBitrixNotification(record, eventType) {
+  const settings = getBitrixNotificationSettings();
+  const eventKey = eventType === "test_assignment_submitted" ? "testAssignmentSubmitted" : "questionnaireSubmitted";
+  if (!settings.enabled || !settings.events?.[eventKey]) return null;
+  const dialogId = String(settings.dialogId || "").trim();
+  const communication = createCommunication({
+    candidateId: record.id,
+    vacancyCode: record.vacancyCode,
+    channel: "bitrix24",
+    eventType,
+    recipient: dialogId,
+    subject: "Уведомление Bitrix24",
+    body: bitrixCandidateMessage(record, eventType),
+    status: dialogId ? "pending" : "skipped",
+    provider: settings.provider,
+    error: dialogId ? "" : "bitrix_dialog_id_missing",
+    payload: { settingsProvider: settings.provider }
+  });
+  if (!dialogId) return communication;
+  try {
+    const method = settings.provider === "imbot" ? "imbot.message.add" : "im.message.add";
+    const providerResponse = await bitrixRest(method, {
+      ...(settings.provider === "imbot" && BITRIX_BOT_ID ? { BOT_ID: Number(BITRIX_BOT_ID) } : {}),
+      ...(settings.provider === "imbot" && BITRIX_CLIENT_ID ? { CLIENT_ID: BITRIX_CLIENT_ID } : {}),
+      DIALOG_ID: dialogId,
+      MESSAGE: communication.body,
+      SYSTEM: "N",
+      URL_PREVIEW: "Y"
+    });
+    return updateCommunication(communication.id, {
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      error: "",
+      providerResponse
+    });
+  } catch (error) {
+    return updateCommunication(communication.id, {
+      status: "failed",
+      error: error.message || String(error)
+    });
+  }
+}
+
+function sendBitrixNotificationAsync(record, eventType) {
+  sendBitrixNotification(record, eventType).catch(error => {
+    console.error("Bitrix24 notification failed", error);
   });
 }
 
@@ -913,11 +1059,23 @@ async function processHhWebhookEvent(event) {
   const results = [];
   for (const publication of publications) {
     const result = await syncHhPublicationResponses(publication);
+    const sent = [];
+    const failed = [];
+    for (const responseItem of result.responses.filter(item => !item.questionnaireSent)) {
+      try {
+        const sendResult = await sendHhQuestionnaireMessage(responseItem);
+        if (!sendResult.skipped) sent.push(responseItem.id);
+      } catch (error) {
+        failed.push({ responseId: responseItem.id, negotiationId: responseItem.negotiationId, error: error.message });
+      }
+    }
     results.push({
       publicationId: publication.id,
       vacancyCode: publication.vacancyCode,
       found: result.found,
-      synced: result.responses.length
+      synced: result.responses.length,
+      questionnaireSent: sent.length,
+      questionnaireFailed: failed.length
     });
     insertAuditLog({
       user: null,
@@ -925,7 +1083,7 @@ async function processHhWebhookEvent(event) {
       targetType: "hh_publication",
       targetId: publication.id,
       vacancyCode: publication.vacancyCode,
-      payload: { eventId: event.id, actionType, hhVacancyId, found: result.found, synced: result.responses.length }
+      payload: { eventId: event.id, actionType, hhVacancyId, found: result.found, synced: result.responses.length, questionnaireSent: sent.length, questionnaireFailed: failed }
     });
   }
   markHhWebhookEventProcessed(event.id, { ...event, processedResults: results });
@@ -939,14 +1097,35 @@ function hhQuestionnaireMessage(responseItem) {
   return [
     name,
     "",
-    `Спасибо за отклик на вакансию "${title}" в Академии менеджмента.`,
+    `Спасибо за отклик на вакансию "${title}" в Бизнес-школу "Академия менеджмента".`,
     "",
-    "Мы смотрим не только резюме, но и то, как человек думает в рабочих ситуациях. Поэтому первый шаг у нас - короткая анкета на 7-10 минут.",
+    "Чтобы быстрее познакомиться с вами и понять, насколько роль вам подходит, мы просим пройти короткую анкету. Это займет около 7-10 минут.",
     "",
-    `Пожалуйста, заполните ее здесь: ${link}`,
+    "В анкете нет длинного тестового задания - только вопросы по опыту, инструментам и рабочим ситуациям.",
     "",
-    "После анкеты мы сможем быстрее понять, насколько роль вам подходит, и вернуться с понятным следующим шагом."
+    `Пройти анкету: ${link}`,
+    "",
+    "После заполнения мы посмотрим ответы и вернемся с понятным следующим шагом."
   ].join("\n");
+}
+
+async function sendHhQuestionnaireMessage(responseItem) {
+  if (!responseItem || responseItem.questionnaireSent) return { skipped: true, reason: "already_sent", response: responseItem };
+  const message = hhQuestionnaireMessage(responseItem);
+  const data = await hhApi(`/negotiations/${encodeURIComponent(responseItem.negotiationId)}/messages`, {
+    method: "POST",
+    body: { message }
+  });
+  const updated = markHhQuestionnaireSent(responseItem.id, message, data);
+  insertAuditLog({
+    user: null,
+    action: "hh.questionnaire.auto_send",
+    targetType: "hh_response",
+    targetId: responseItem.id,
+    vacancyCode: responseItem.vacancyCode,
+    payload: { negotiationId: responseItem.negotiationId }
+  });
+  return { skipped: false, response: updated };
 }
 
 function normalizeHhNegotiation(item, publication) {
@@ -1844,6 +2023,7 @@ async function handleApi(req, res) {
       recommendation: record.recommendation?.code || "",
       score: record.score?.total ?? null
     });
+    sendBitrixNotificationAsync(record, "questionnaire_submitted");
     return sendJson(res, 201, {
       id: record.id,
       score: record.score,
@@ -1876,6 +2056,7 @@ async function handleApi(req, res) {
       source: "test_assignment_submission",
       link: testLink
     });
+    sendBitrixNotificationAsync(updated, "test_assignment_submitted");
     return sendJson(res, 200, { ok: true, testAssignment: updated.testAssignment });
   }
 
@@ -2327,6 +2508,47 @@ async function handleApi(req, res) {
     });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/admin/bitrix/notifications") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Нет доступа к настройкам уведомлений." });
+    return sendJson(res, 200, { settings: publicBitrixNotificationStatus() });
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/admin/bitrix/notifications") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Настройки уведомлений меняет HR или владелец." });
+    const payload = await readBody(req);
+    const settings = normalizeBitrixNotificationSettings(payload);
+    saveConfig("bitrixNotifications", settings);
+    insertAuditLog({ user: adminSession, action: "bitrix.notifications.update", targetType: "integration", targetId: "bitrix24", payload: { enabled: settings.enabled, provider: settings.provider, dialogId: settings.dialogId, events: settings.events } });
+    return sendJson(res, 200, { settings: publicBitrixNotificationStatus() });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/bitrix/notifications/test") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Тест уведомлений запускает HR или владелец." });
+    const settings = getBitrixNotificationSettings();
+    if (!BITRIX_WEBHOOK_BASE) return sendJson(res, 400, { error: "BITRIX_WEBHOOK_BASE не настроен на сервере." });
+    if (!settings.dialogId) return sendJson(res, 400, { error: "Укажите DIALOG_ID чата Bitrix24." });
+    const method = settings.provider === "imbot" ? "imbot.message.add" : "im.message.add";
+    try {
+      const providerResponse = await bitrixRest(method, {
+        ...(settings.provider === "imbot" && BITRIX_BOT_ID ? { BOT_ID: Number(BITRIX_BOT_ID) } : {}),
+        ...(settings.provider === "imbot" && BITRIX_CLIENT_ID ? { CLIENT_ID: BITRIX_CLIENT_ID } : {}),
+        DIALOG_ID: settings.dialogId,
+        MESSAGE: [
+          "[B]Тест уведомлений HR Screening[/B]",
+          "",
+          "Если вы видите это сообщение, интеграция Bitrix24 работает.",
+          `[URL=${APP_PUBLIC_URL}/#admin]Открыть HR-платформу[/URL]`
+        ].join("\n"),
+        SYSTEM: "N",
+        URL_PREVIEW: "Y"
+      });
+      insertAuditLog({ user: adminSession, action: "bitrix.notifications.test", targetType: "integration", targetId: "bitrix24", payload: { provider: settings.provider, dialogId: settings.dialogId } });
+      return sendJson(res, 200, { ok: true, providerResponse });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message || "Не удалось отправить тестовое сообщение Bitrix24." });
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/api/admin/hh/webhook/setup") {
     if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Webhook HeadHunter настраивает HR или владелец." });
     if (!hhConfigured()) return sendJson(res, 400, { error: "HeadHunter API не настроен." });
@@ -2374,12 +2596,8 @@ async function handleApi(req, res) {
     if (!responseItem) return sendJson(res, 404, { error: "Отклик не найден." });
     if (!canWriteVacancy(adminSession, responseItem.vacancyCode)) return sendJson(res, 403, { error: "Нет прав на эту вакансию." });
     if (responseItem.questionnaireSent) return sendJson(res, 409, { error: "Ссылка уже отправлена этому кандидату." });
-    const message = hhQuestionnaireMessage(responseItem);
-    const data = await hhApi(`/negotiations/${encodeURIComponent(responseItem.negotiationId)}/messages`, {
-      method: "POST",
-      body: { message }
-    });
-    const updated = markHhQuestionnaireSent(responseItem.id, message, data);
+    const sendResult = await sendHhQuestionnaireMessage(responseItem);
+    const updated = sendResult.response;
     insertAuditLog({ user: adminSession, action: "hh.questionnaire.send", targetType: "hh_response", targetId: responseItem.id, vacancyCode: responseItem.vacancyCode });
     return sendJson(res, 200, { response: updated });
   }

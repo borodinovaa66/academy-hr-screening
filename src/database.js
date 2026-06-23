@@ -935,6 +935,20 @@ function getQuestionnaireConfig() {
   return parseJson(row?.value_json, defaultConfig);
 }
 
+function getConfig(key, fallback = {}) {
+  const row = db.prepare("SELECT value_json FROM configs WHERE key = ?").get(String(key || ""));
+  return parseJson(row?.value_json, fallback);
+}
+
+function saveConfig(key, value) {
+  db.prepare(`
+    INSERT INTO configs (key, value_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+  `).run(String(key || ""), json(value || {}), new Date().toISOString());
+  return value || {};
+}
+
 function saveQuestionnaireConfig(config) {
   validateQuestionnaireConfig(config);
   db.prepare(`
@@ -1329,6 +1343,8 @@ function upsertTelegramLink(record) {
 
 module.exports = {
   initDb,
+  getConfig,
+  saveConfig,
   getQuestionnaireConfig,
   saveQuestionnaireConfig,
   listUsers,

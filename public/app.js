@@ -14,7 +14,7 @@ const OPERATOR = {
   email: "hr@praktiki.pro",
   dataRetention: "6 месяцев"
 };
-const ADMIN_SECTIONS = new Set(["overview", "candidates", "interview", "analytics", "hiring", "hh", "staff", "audit"]);
+const ADMIN_SECTIONS = new Set(["overview", "candidates", "interview", "analytics", "hiring", "hh", "notifications", "staff", "audit"]);
 
 let labels = {
   experienceYears: {
@@ -272,6 +272,8 @@ const state = {
   },
   hhStatus: null,
   hhResponses: [],
+  bitrixNotifications: null,
+  bitrixNotificationDraft: null,
   interviewCandidateId: "",
   interviewDrafts: {},
   testManualDrafts: {},
@@ -458,6 +460,7 @@ function icon(name) {
     filter: '<path d="M22 3H2l8 9.5V19l4 2v-8.5Z"/>',
     eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
     trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+    bell: '<path d="M10 21h4"/><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>',
     copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
   };
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths[name] || paths.check}</svg>`;
@@ -1214,13 +1217,14 @@ async function loadAdmin() {
     fetch("/api/admin/hh-texts"),
     fetch("/api/admin/hh-publications"),
     fetch("/api/admin/hh/status"),
-    fetch("/api/admin/hh/responses")
+    fetch("/api/admin/hh/responses"),
+    fetch("/api/admin/bitrix/notifications")
   ];
   if (isOwner()) {
     requests.push(fetch("/api/admin/users"));
     requests.push(fetch("/api/admin/audit"));
   }
-  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhResponsesResponse, usersResponse, auditResponse] = await Promise.all(requests);
+  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhResponsesResponse, bitrixNotificationsResponse, usersResponse, auditResponse] = await Promise.all(requests);
   if (subs.status === 401 || analytics.status === 401) return false;
   if (subs.status === 403 || analytics.status === 403) {
     showToast("У вашей учетной записи нет доступа к этой вакансии.");
@@ -1246,6 +1250,11 @@ async function loadAdmin() {
   if (hhPublicationsResponse?.ok) state.hhPublications = (await hhPublicationsResponse.json()).publications;
   if (hhStatusResponse?.ok) state.hhStatus = await hhStatusResponse.json();
   if (hhResponsesResponse?.ok) state.hhResponses = (await hhResponsesResponse.json()).responses;
+  if (bitrixNotificationsResponse?.ok) {
+    const data = await bitrixNotificationsResponse.json();
+    state.bitrixNotifications = data.settings;
+    state.bitrixNotificationDraft = { ...data.settings, events: { ...(data.settings?.events || {}) } };
+  }
   if (usersResponse?.ok) state.adminUsers = (await usersResponse.json()).users;
   if (auditResponse?.ok) state.auditLogs = (await auditResponse.json()).logs;
   return true;
@@ -1387,6 +1396,7 @@ function adminSidebar() {
       adminNavButton("analytics", "Аналитика", "chart"),
       adminNavButton("hiring", "Подобрать сотрудника", "filter"),
       adminNavButton("hh", "HeadHunter", "copy"),
+      adminNavButton("notifications", "Уведомления", "bell"),
       ...(isOwner() ? [
         adminNavButton("staff", "Сотрудники", "user"),
         adminNavButton("audit", "Журнал", "list")
@@ -3049,6 +3059,120 @@ function headHunterDashboardView() {
   ]);
 }
 
+async function saveBitrixNotificationSettings() {
+  const draft = state.bitrixNotificationDraft || {};
+  const response = await fetch("/api/admin/bitrix/notifications", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft)
+  });
+  const data = await response.json().catch(() => ({ error: "Не удалось сохранить настройки Bitrix24." }));
+  if (!response.ok) return showToast(data.error || "Не удалось сохранить настройки Bitrix24.");
+  state.bitrixNotifications = data.settings;
+  state.bitrixNotificationDraft = { ...data.settings, events: { ...(data.settings?.events || {}) } };
+  showToast("Настройки Bitrix24 сохранены.");
+  render();
+}
+
+async function testBitrixNotificationSettings() {
+  const response = await fetch("/api/admin/bitrix/notifications/test", { method: "POST" });
+  const data = await response.json().catch(() => ({ error: "Не удалось отправить тестовое уведомление." }));
+  if (!response.ok) return showToast(data.error || "Не удалось отправить тестовое уведомление.");
+  showToast("Тестовое уведомление отправлено в Bitrix24.");
+}
+
+function notificationEventCheckbox(key, label, note) {
+  const draft = state.bitrixNotificationDraft || { events: {} };
+  return el("label", { class: "choice-line" }, [
+    el("input", {
+      type: "checkbox",
+      checked: Boolean(draft.events?.[key]),
+      onchange: event => {
+        state.bitrixNotificationDraft = {
+          ...draft,
+          events: { ...(draft.events || {}), [key]: event.target.checked }
+        };
+        render();
+      }
+    }),
+    el("span", {}, [label]),
+    note ? el("em", {}, [note]) : el("em")
+  ]);
+}
+
+function bitrixNotificationsView() {
+  const status = state.bitrixNotifications || {};
+  const draft = state.bitrixNotificationDraft || { enabled: false, provider: "im", dialogId: "", events: {} };
+  return el("section", { class: "staff-page" }, [
+    el("header", { class: "dash-header" }, [
+      el("div", {}, [
+        el("div", { class: "badge" }, [iconEl("bell"), "Bitrix24"]),
+        el("h1", {}, ["Уведомления"]),
+        el("p", {}, ["Сообщения о важных шагах кандидатов отправляются в общий чат Bitrix24. Кто состоит в чате, тот видит уведомления."])
+      ])
+    ]),
+    el("section", { class: "table-panel staff-form" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Канал уведомлений"]),
+        el("span", {}, [status.configured ? "webhook на сервере настроен" : "BITRIX_WEBHOOK_BASE не задан"])
+      ]),
+      !status.configured ? el("div", { class: "empty danger-note" }, [
+        "На сервере не задан BITRIX_WEBHOOK_BASE. Сохранить настройки можно, но отправка сообщений не заработает до настройки webhook."
+      ]) : el("div"),
+      el("div", { class: "staff-form-grid" }, [
+        el("label", { class: "choice-line" }, [
+          el("input", {
+            type: "checkbox",
+            checked: Boolean(draft.enabled),
+            onchange: event => {
+              state.bitrixNotificationDraft = { ...draft, enabled: event.target.checked };
+              render();
+            }
+          }),
+          el("span", {}, ["Включить уведомления Bitrix24"])
+        ]),
+        el("label", { class: "named-input" }, [
+          el("span", {}, ["DIALOG_ID чата"]),
+          el("input", {
+            class: "input compact-input",
+            value: draft.dialogId || "",
+            placeholder: "Например: chat2941",
+            oninput: event => {
+              state.bitrixNotificationDraft = { ...draft, dialogId: event.target.value };
+            }
+          })
+        ]),
+        el("label", { class: "named-input" }, [
+          el("span", {}, ["Способ отправки"]),
+          el("select", {
+            class: "input compact-input",
+            value: draft.provider || "im",
+            onchange: event => {
+              state.bitrixNotificationDraft = { ...draft, provider: event.target.value };
+              render();
+            }
+          }, [
+            el("option", { value: "im" }, ["Сообщение в чат"]),
+            el("option", { value: "imbot" }, ["Сообщение от чат-бота"])
+          ])
+        ])
+      ]),
+      el("div", { class: "empty" }, [
+        "DIALOG_ID выглядит как chat123. Его можно взять из ссылки/данных чата Bitrix24 или проверить через тестовую отправку."
+      ]),
+      el("div", { class: "notification-options" }, [
+        notificationEventCheckbox("questionnaireSubmitted", "Кандидат заполнил анкету", "основное событие для HR"),
+        notificationEventCheckbox("testAssignmentSubmitted", "Кандидат прикрепил тестовое", "сигнал руководителю проверить работу"),
+        notificationEventCheckbox("interviewRecommended", "Кандидат рекомендован к интервью", "зарезервировано для следующего шага pipeline")
+      ]),
+      el("div", { class: "hh-publication-actions" }, [
+        isHrOrOwner() ? el("button", { class: "btn primary", onclick: saveBitrixNotificationSettings }, ["Сохранить настройки"]) : el("div"),
+        isHrOrOwner() ? el("button", { class: "btn ghost", onclick: testBitrixNotificationSettings }, ["Отправить тест"]) : el("div")
+      ])
+    ])
+  ]);
+}
+
 function adminView() {
   if (!state.user) return loginView();
   ensureAdminLoaded();
@@ -3065,6 +3189,8 @@ function adminView() {
         ? hiringDashboardView()
         : state.adminSection === "hh"
           ? headHunterDashboardView()
+      : state.adminSection === "notifications"
+        ? bitrixNotificationsView()
       : state.adminSection === "interview"
         ? interviewWorkspaceView()
       : state.adminSection === "analytics"
