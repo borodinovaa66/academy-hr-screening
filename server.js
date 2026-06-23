@@ -812,6 +812,27 @@ async function hhApi(pathname, options = {}) {
   return data;
 }
 
+function hhApiPathFromUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw, HH_API_BASE);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return raw.startsWith("/") ? raw : `/${raw}`;
+  }
+}
+
+function hhPathWithQuery(pathname, params = {}) {
+  const url = new URL(hhApiPathFromUrl(pathname), HH_API_BASE);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return `${url.pathname}${url.search}`;
+}
+
 const HH_WEBHOOK_ACTIONS = [
   { type: "NEW_NEGOTIATION_VACANCY", settings: { vacancies_only_mine: false } }
 ];
@@ -944,6 +965,38 @@ function normalizeHhNegotiation(item, publication) {
   };
 }
 
+function collectHhNegotiationCollectionUrls(collections = [], result = []) {
+  for (const collection of collections || []) {
+    if (collection?.url) result.push(collection.url);
+    collectHhNegotiationCollectionUrls(collection?.sub_collections || [], result);
+  }
+  return [...new Set(result.map(hhApiPathFromUrl).filter(Boolean))];
+}
+
+function hhNegotiationBelongsToPublication(item, publication) {
+  const expected = String(publication.hhVacancyId || "");
+  const values = [
+    item?.vacancy?.id,
+    item?.vacancy_id,
+    item?.resume?.vacancy?.id
+  ].map(value => String(value || "")).filter(Boolean);
+  return values.length === 0 || values.includes(expected);
+}
+
+async function fetchHhNegotiationItemsFromCollection(collectionUrl, publication) {
+  const items = [];
+  const perPage = 50;
+  const maxPages = 50;
+  for (let page = 0; page < maxPages; page += 1) {
+    const data = await hhApi(hhPathWithQuery(collectionUrl, { vacancy_id: publication.hhVacancyId, per_page: perPage, page }));
+    const pageItems = Array.isArray(data.items) ? data.items : [];
+    items.push(...pageItems.filter(item => hhNegotiationBelongsToPublication(item, publication)));
+    const pages = Number(data.pages);
+    if (!Number.isFinite(pages) || page >= pages - 1 || pageItems.length === 0) break;
+  }
+  return items;
+}
+
 function asMetricNumber(...values) {
   for (const value of values) {
     const numeric = Number(value);
@@ -1020,13 +1073,27 @@ async function syncHhPublicationMetrics(publication) {
 async function syncHhPublicationResponses(publication) {
   if (!publication?.hhVacancyId) throw new Error("У публикации нет ID вакансии HeadHunter.");
   await syncHhPublicationMetrics(publication);
-  const data = await hhApi(`/negotiations?vacancy_id=${encodeURIComponent(publication.hhVacancyId)}`);
-  const items = data.items || [];
+  const root = await hhApi(`/negotiations?vacancy_id=${encodeURIComponent(publication.hhVacancyId)}`);
+  const collectionUrls = collectHhNegotiationCollectionUrls(root.collections || []);
+  if (!collectionUrls.length) {
+    collectionUrls.push(`/negotiations/response?vacancy_id=${encodeURIComponent(publication.hhVacancyId)}`);
+  }
+  const seen = new Set();
+  const items = [];
+  for (const collectionUrl of collectionUrls) {
+    const collectionItems = await fetchHhNegotiationItemsFromCollection(collectionUrl, publication);
+    for (const item of collectionItems) {
+      const id = String(item.id || item.nid || item.negotiation_id || "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      items.push(item);
+    }
+  }
   const responses = items
     .map(item => normalizeHhNegotiation(item, publication))
     .filter(item => item.negotiationId)
     .map(item => upsertHhResponse(item));
-  return { responses, found: data.found ?? responses.length };
+  return { responses, found: responses.length, collections: collectionUrls.length };
 }
 
 function findHhPublicationsByVacancyId(hhVacancyId) {
