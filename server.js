@@ -940,15 +940,17 @@ async function refreshHhAccountIfNeeded() {
 async function hhApi(pathname, options = {}) {
   const account = await refreshHhAccountIfNeeded();
   if (!account?.accessToken) throw new Error("HeadHunter не подключен.");
+  const formBody = options.form ? new URLSearchParams(options.form) : null;
   const response = await fetch(`${HH_API_BASE}${pathname}`, {
     method: options.method || "GET",
     headers: {
       "Authorization": `Bearer ${account.accessToken}`,
       "User-Agent": HH_USER_AGENT,
       "HH-User-Agent": HH_USER_AGENT,
+      ...(formBody ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
       ...(options.body ? { "Content-Type": "application/json" } : {})
     },
-    body: options.body ? JSON.stringify(options.body) : undefined
+    body: formBody || (options.body ? JSON.stringify(options.body) : undefined)
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
@@ -1114,7 +1116,7 @@ async function sendHhQuestionnaireMessage(responseItem) {
   const message = hhQuestionnaireMessage(responseItem);
   const data = await hhApi(`/negotiations/${encodeURIComponent(responseItem.negotiationId)}/messages`, {
     method: "POST",
-    body: { message }
+    form: { message }
   });
   const updated = markHhQuestionnaireSent(responseItem.id, message, data);
   insertAuditLog({

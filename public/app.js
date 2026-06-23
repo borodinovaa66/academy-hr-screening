@@ -274,6 +274,7 @@ const state = {
   hhResponses: [],
   bitrixNotifications: null,
   bitrixNotificationDraft: null,
+  candidateListExpanded: false,
   interviewCandidateId: "",
   interviewDrafts: {},
   testManualDrafts: {},
@@ -433,6 +434,7 @@ window.addEventListener("hashchange", () => {
     state.adminVacancyCode = adminVacancyCodeFromHash();
     state.analytics = null;
     state.submissions = [];
+    state.candidateListExpanded = false;
   }
   render();
 });
@@ -1376,6 +1378,7 @@ function adminVacancyButton(code, vacancy) {
       if (location.hash !== `#admin/${code}`) history.replaceState(null, "", `#admin/${code}`);
       state.selected = null;
       state.aiInsights = null;
+      state.candidateListExpanded = false;
       state.loading = true;
       render();
       await loadAdmin();
@@ -1632,7 +1635,7 @@ function vacancyMetricsDashboard(analytics) {
     el("div", { class: "channel-metrics-grid" }, [
       channelMetricCard("Просмотры HH", metrics.hhViews, metrics.hhViews === null ? "HH пока не отдал счетчик" : "карточка вакансии"),
       channelMetricCard("Отклики HH", metrics.hhResponses, "синхронизированные отклики"),
-      channelMetricCard("Анкета отправлена", metrics.sentQuestionnaires, `${metrics.responseToQuestionnaire} от откликов`),
+      channelMetricCard("Приглашений отправлено", metrics.sentQuestionnaires, "ссылка на анкету отправлена"),
       channelMetricCard("Переходы на опросник", metrics.landingViews, "уникальные сессии"),
       channelMetricCard("Начали анкету", metrics.started, "нажали старт"),
       channelMetricCard("Заполнили анкету", metrics.completed, `${metrics.visitToComplete} от переходов`)
@@ -1673,6 +1676,28 @@ function candidateRow(item) {
       "aria-label": `Удалить ${item.candidate.fullName || "кандидата"}`,
       onclick: () => deleteSubmission(item)
     }, [iconEl("trash")]) : el("div")
+  ]);
+}
+
+function candidatesPanel(currentVacancyTitle) {
+  const limit = 8;
+  const total = state.submissions.length;
+  const visible = state.candidateListExpanded ? state.submissions : state.submissions.slice(0, limit);
+  return el("section", { class: "table-panel candidates-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Кандидаты"]),
+        el("span", {}, [total ? `Показано ${visible.length} из ${total}` : "Нажмите на строку, чтобы открыть профиль"])
+      ]),
+      total > limit ? el("button", {
+        class: "btn ghost",
+        onclick: () => {
+          state.candidateListExpanded = !state.candidateListExpanded;
+          render();
+        }
+      }, [state.candidateListExpanded ? "Свернуть список" : `Показать всех: ${total}`]) : el("span", {}, ["Нажмите на строку, чтобы открыть профиль"])
+    ]),
+    ...(total ? visible.map(candidateRow) : [el("div", { class: "empty" }, [`Пока нет заполненных анкет по вакансии "${currentVacancyTitle}". Скопируйте ссылку выше и отправьте ее кандидату.`])])
   ]);
 }
 
@@ -3214,10 +3239,7 @@ function adminView() {
         statusBar(analytics),
         vacancyMetricsDashboard(analytics),
         adminQuestionnaireLinksPanel(),
-        el("section", { class: "table-panel" }, [
-          el("div", { class: "panel-head" }, [el("h2", {}, ["Кандидаты"]), el("span", {}, ["Нажмите на строку, чтобы открыть профиль"])]),
-          ...(state.submissions.length ? state.submissions.map(candidateRow) : [el("div", { class: "empty" }, [`Пока нет заполненных анкет по вакансии "${currentVacancyTitle}". Скопируйте ссылку выше и отправьте ее кандидату.`])])
-        ])
+        candidatesPanel(currentVacancyTitle)
       ]),
       el("aside", { class: "dashboard-side" }, [
         el("section", { class: "insight-panel" }, [
