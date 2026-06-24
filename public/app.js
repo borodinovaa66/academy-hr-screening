@@ -311,6 +311,7 @@ const state = {
     loading: false,
     listening: false
   },
+  vacancyReviewPrompt: null,
   staffForm: {
     email: "",
     displayName: "",
@@ -2947,8 +2948,24 @@ async function saveVacancyWizardDraft() {
   resetVacancyWizard();
   state.adminVacancyCode = data.vacancyCode;
   state.openingForm.vacancyCode = data.vacancyCode;
+  state.vacancyReviewPrompt = {
+    vacancyCode: data.vacancyCode,
+    title: data.vacancy?.title || data.config?.publicTitle || "Новая вакансия",
+    hhText: data.config?.vacancyArtifacts?.hhText || "",
+    roleProfile: data.config?.vacancyArtifacts?.roleProfile || "",
+    responsibilities: data.config?.vacancyArtifacts?.responsibilities || [],
+    showDialog: true
+  };
   await loadAdmin();
-  showToast("Вакансия добавлена в справочник. Теперь можно начинать подбор.");
+  state.vacancyReviewPrompt = {
+    ...(state.vacancyReviewPrompt || {}),
+    vacancyCode: data.vacancyCode,
+    title: data.vacancy?.title || data.config?.publicTitle || "Новая вакансия",
+    hhText: data.config?.vacancyArtifacts?.hhText || "",
+    roleProfile: data.config?.vacancyArtifacts?.roleProfile || "",
+    responsibilities: data.config?.vacancyArtifacts?.responsibilities || [],
+    showDialog: true
+  };
   render();
 }
 
@@ -3197,6 +3214,66 @@ function vacancyWizardPanel() {
   ]);
 }
 
+function createdVacancyReviewPanel() {
+  const prompt = state.vacancyReviewPrompt;
+  if (!prompt?.vacancyCode) return el("div");
+  return el("section", { class: "table-panel vacancy-review-panel", id: "vacancy-review-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Описание вакансии к проверке"]),
+        el("span", {}, ["Проверьте профиль роли, обязанности и текст для hh.ru перед запуском подбора."])
+      ]),
+      el("button", { class: "btn ghost", onclick: () => { state.vacancyReviewPrompt = null; render(); } }, ["Скрыть"])
+    ]),
+    el("div", { class: "vacancy-review-grid" }, [
+      el("div", { class: "vacancy-draft-block" }, [
+        el("span", {}, ["Вакансия"]),
+        el("strong", {}, [prompt.title || vacancyLabel(prompt.vacancyCode)])
+      ]),
+      prompt.roleProfile ? el("div", { class: "vacancy-draft-block" }, [
+        el("span", {}, ["Профиль роли"]),
+        el("p", {}, [prompt.roleProfile])
+      ]) : el("div"),
+      prompt.responsibilities?.length ? el("div", { class: "vacancy-draft-block" }, [
+        el("span", {}, ["Обязанности"]),
+        el("ul", {}, prompt.responsibilities.slice(0, 8).map(item => el("li", {}, [item])))
+      ]) : el("div"),
+      prompt.hhText ? el("div", { class: "vacancy-draft-block wide" }, [
+        el("span", {}, ["Текст для hh.ru"]),
+        el("pre", {}, [prompt.hhText])
+      ]) : el("div", { class: "empty" }, ["Текст для hh.ru будет создан при запуске подбора по этой вакансии."])
+    ])
+  ]);
+}
+
+function vacancyCreatedDialog() {
+  const prompt = state.vacancyReviewPrompt;
+  if (!prompt?.vacancyCode || prompt.showDialog === false) return el("div");
+  const closeDialog = () => {
+    state.vacancyReviewPrompt = { ...state.vacancyReviewPrompt, showDialog: false };
+    render();
+  };
+  return el("div", { class: "dialog-backdrop", onclick: event => { if (event.target.className === "dialog-backdrop") closeDialog(); } }, [
+    el("div", { class: "confirm-dialog" }, [
+      el("button", { class: "close-btn", onclick: closeDialog }, ["×"]),
+      el("div", { class: "badge" }, [iconEl("check"), "Вакансия создана"]),
+      el("h2", {}, ["Проверьте описание перед запуском"]),
+      el("p", {}, [`Вакансия "${prompt.title || vacancyLabel(prompt.vacancyCode)}" добавлена в справочник. Перед публикацией и отправкой кандидатов нужно проверить текст, обязанности, условия и вопросы анкеты.`]),
+      el("div", { class: "dialog-actions" }, [
+        el("button", { class: "btn ghost", onclick: closeDialog }, ["Позже"]),
+        el("button", { class: "btn primary", onclick: () => {
+          state.adminSection = "hiring";
+          state.openingForm.vacancyCode = prompt.vacancyCode;
+          state.vacancyReviewPrompt = { ...state.vacancyReviewPrompt, showDialog: false };
+          if (location.hash !== "#admin/hiring") history.replaceState(null, "", "#admin/hiring");
+          render();
+          setTimeout(() => document.getElementById("vacancy-review-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+        } }, ["Перейти к описанию вакансии", iconEl("arrow")])
+      ])
+    ])
+  ]);
+}
+
 function hiringDashboardView() {
   const canCreateOpening = canStartRecruitment();
   return el("section", { class: "staff-page" }, [
@@ -3228,6 +3305,7 @@ function hiringDashboardView() {
       el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
     ]),
     canCreateOpening ? vacancyWizardPanel() : el("div"),
+    canCreateOpening ? createdVacancyReviewPanel() : el("div"),
     canCreateOpening ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Начать подбор по готовой вакансии"]), el("span", {}, ["Создает рабочую воронку по выбранной позиции."])]),
       el("div", { class: "staff-form-grid" }, [
@@ -3659,7 +3737,8 @@ function adminView() {
       adminSidebar(),
       el("div", { class: "admin-content" }, [mainContent])
     ]),
-    selected ? profileDrawer(selected) : el("div")
+    selected ? profileDrawer(selected) : el("div"),
+    vacancyCreatedDialog()
   ]);
 }
 
