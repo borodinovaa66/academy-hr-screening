@@ -1373,8 +1373,8 @@ function buildTestAssignmentReview(testAssignment = {}) {
         ? "manual_review"
         : "conflict";
   const comparisonLabel = {
-    waiting_scores: "ждем оценку руководителя и ИИ",
-    waiting_ai: "ждем AI-оценку",
+    waiting_scores: "ждем оценку руководителя и нейросети",
+    waiting_ai: "ждем оценку нейросети",
     waiting_manual: "ждем оценку руководителя",
     aligned: "оценки согласованы",
     manual_review: "есть расхождение, нужна ручная проверка",
@@ -1392,7 +1392,7 @@ function buildTestAssignmentReview(testAssignment = {}) {
       : hasManual
         ? "пока только оценка руководителя"
         : hasAi
-          ? "пока только AI-оценка"
+          ? "пока только оценка нейросети"
           : "тестовое еще не оценено"
   };
 }
@@ -1479,7 +1479,47 @@ function isTestAssignmentEligible(record, config) {
     (testConfig.enabledStatuses || ["green"]).includes(record.recommendation.code);
 }
 
-async function generateAiInsights(submissions, analytics) {
+const VALUE_LABELS_RU = {
+  b2b: "Корпоративные проекты",
+  b2c: "Проекты для массового потребителя",
+  expert: "Экспертные продукты",
+  education: "Образовательные проекты",
+  consulting: "Консалтинг / услуги",
+  premium: "Премиальные продукты",
+  personalBrand: "Личный бренд",
+  ecommerce: "Интернет-магазины",
+  lifestyle: "Развлекательные проекты",
+  reach: "Охваты и показы",
+  er: "Уровень вовлеченности",
+  saves: "Сохранения и репосты",
+  follows: "Подписки и отписки",
+  leads: "Заявки",
+  portfolio: "Резюме и портфолио",
+  experience: "Релевантный опыт",
+  responsibilities: "Зона ответственности",
+  tools: "Инструменты",
+  analytics: "Аналитика и рост",
+  culture: "Рабочее поведение",
+  green: "сильный кандидат",
+  yellow: "ручная проверка",
+  orange: "резерв",
+  red: "отказ",
+  Green: "сильный кандидат",
+  Yellow: "ручная проверка",
+  Orange: "резерв",
+  Red: "отказ"
+};
+
+function labelValueRu(config, field, value) {
+  return config?.labels?.[field]?.[value] || VALUE_LABELS_RU[value] || value;
+}
+
+function labelListRu(config, field, values) {
+  const list = Array.isArray(values) ? values : [values];
+  return list.filter(Boolean).map(value => labelValueRu(config, field, value));
+}
+
+async function generateAiInsights(submissions, analytics, config = {}) {
   const fallback = (risk = null) => ({
     mode: "local",
     summary: analytics.summary,
@@ -1489,10 +1529,10 @@ async function generateAiInsights(submissions, analytics) {
 
   if (AI_PROVIDER === "yandex") {
     if (!YANDEX_GPT_API_KEY || !YANDEX_FOLDER_ID) {
-      return fallback("AI-анализ не выполнен: не заданы YANDEX_GPT_API_KEY или YANDEX_FOLDER_ID.");
+      return fallback("Анализ нейросетью не выполнен: на сервере не заданы ключ и каталог Яндекс GPT.");
     }
-    return generateYandexInsights(submissions, analytics).catch(error => (
-      fallback(`AI-анализ не выполнен: YandexGPT вернул ошибку: ${error.message}.`)
+    return generateYandexInsights(submissions, analytics, config).catch(error => (
+      fallback(`Анализ нейросетью не выполнен: Яндекс GPT вернул ошибку: ${error.message}.`)
     ));
   }
 
@@ -1500,30 +1540,31 @@ async function generateAiInsights(submissions, analytics) {
     return fallback();
   }
 
-  return generateOpenAiInsights(submissions, analytics).catch(error => (
-    fallback(`AI-анализ не выполнен: OpenAI вернул ошибку: ${error.message}.`)
+  return generateOpenAiInsights(submissions, analytics, config).catch(error => (
+    fallback(`Анализ нейросетью не выполнен: внешний нейросетевой сервис вернул ошибку: ${error.message}.`)
   ));
 }
 
-function compactSubmissions(submissions) {
+function compactSubmissions(submissions, config = {}) {
   return submissions.slice(-40).map(item => ({
     score: item.score.total,
-    status: item.recommendation.status,
-    projects: item.answers.projectTypes,
-    responsibilities: item.answers.responsibilities,
-    metrics: item.answers.metrics,
+    status: VALUE_LABELS_RU[item.recommendation?.label] || VALUE_LABELS_RU[item.recommendation?.code] || item.recommendation.status,
+    projects: labelListRu(config, "projectTypes", item.answers.projectTypes),
+    responsibilities: labelListRu(config, "responsibilities", item.answers.responsibilities),
+    metrics: labelListRu(config, "metrics", item.answers.metrics),
     income: item.answers.income,
     flags: item.flags.map(flag => flag.title)
   }));
 }
 
-function aiPrompt(submissions, analytics) {
+function aiPrompt(submissions, analytics, config = {}) {
   return [
-    "Ты HR-аналитик для подбора SMM-менеджера.",
+    `Ты аналитик по подбору персонала для вакансии "${config.publicTitle || config.title || "специалист"}".`,
     "Проанализируй поток кандидатов и дай короткие практические рекомендации HR.",
     "Нужно выявить: качество рынка, слабые места вакансии, что исправить в описании вакансии, что проверить на интервью.",
+    "Не используй английские служебные статусы, технические ключи и англицизмы. Пиши пользовательские термины только по-русски.",
     "Ответ строго JSON: {summary:string,recommendations:string[],risks:string[],interviewFocus:string[]}.",
-    JSON.stringify({ analytics, candidates: compactSubmissions(submissions) })
+    JSON.stringify({ analytics, candidates: compactSubmissions(submissions, config) })
   ].join("\n");
 }
 
@@ -1534,7 +1575,7 @@ function parseAiJson(content) {
   return JSON.parse(jsonText);
 }
 
-async function generateYandexInsights(submissions, analytics) {
+async function generateYandexInsights(submissions, analytics, config = {}) {
   const payload = {
     modelUri: `gpt://${YANDEX_FOLDER_ID}/${YANDEX_GPT_MODEL}/latest`,
     completionOptions: {
@@ -1543,8 +1584,8 @@ async function generateYandexInsights(submissions, analytics) {
       maxTokens: 1200
     },
     messages: [
-      { role: "system", text: "Отвечай по-русски, кратко, прикладно, без воды. Верни только валидный JSON без Markdown." },
-      { role: "user", text: aiPrompt(submissions, analytics) }
+      { role: "system", text: "Отвечай по-русски, кратко, прикладно, без воды. Не используй английские служебные слова и технические ключи. Верни только валидный JSON без Markdown." },
+      { role: "user", text: aiPrompt(submissions, analytics, config) }
     ]
   };
 
@@ -1566,13 +1607,13 @@ async function generateYandexInsights(submissions, analytics) {
   return { mode: "yandex", ...parseAiJson(content) };
 }
 
-async function generateOpenAiInsights(submissions, analytics) {
-  const prompt = aiPrompt(submissions, analytics);
+async function generateOpenAiInsights(submissions, analytics, config = {}) {
+  const prompt = aiPrompt(submissions, analytics, config);
 
   const payload = {
     model: OPENAI_MODEL,
     messages: [
-      { role: "system", content: "Отвечай по-русски, кратко, прикладно, без воды." },
+      { role: "system", content: "Отвечай по-русски, кратко, прикладно, без воды. Не используй английские служебные слова и технические ключи." },
       { role: "user", content: prompt }
     ],
     temperature: 0.2,
@@ -2536,7 +2577,7 @@ async function handleApi(req, res) {
         ...(settings.provider === "imbot" && BITRIX_CLIENT_ID ? { CLIENT_ID: BITRIX_CLIENT_ID } : {}),
         DIALOG_ID: settings.dialogId,
         MESSAGE: [
-          "[B]Тест уведомлений HR Screening[/B]",
+          "[B]Тест уведомлений платформы подбора[/B]",
           "",
           "Если вы видите это сообщение, интеграция Bitrix24 работает.",
           `[URL=${APP_PUBLIC_URL}/#admin]Открыть HR-платформу[/URL]`
@@ -2552,14 +2593,14 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/hh/webhook/setup") {
-    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Webhook HeadHunter настраивает HR или владелец." });
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Автоматический прием событий hh.ru настраивает HR или владелец." });
     if (!hhConfigured()) return sendJson(res, 400, { error: "HeadHunter API не настроен." });
     try {
       const webhook = await ensureHhWebhookSubscription();
       insertAuditLog({ user: adminSession, action: "hh.webhook.setup", targetType: "integration", targetId: "headhunter", payload: { configured: webhook.configured, subscriptionId: webhook.subscriptionId } });
       return sendJson(res, 200, { webhook });
     } catch (error) {
-      return sendJson(res, 400, { error: error.message || "Не удалось настроить webhook HeadHunter." });
+      return sendJson(res, 400, { error: error.message || "Не удалось настроить автоматический прием событий hh.ru." });
     }
   }
 
@@ -2656,7 +2697,7 @@ async function handleApi(req, res) {
     const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
     const events = vacancyCode ? listEvents().filter(event => event.vacancyCode === vacancyCode) : listEvents();
     const analytics = buildFlowAnalytics(submissions, events);
-    const insights = await generateAiInsights(submissions, analytics);
+    const insights = await generateAiInsights(submissions, analytics, getVacancyConfig(vacancyCode, baseConfig));
     insertAuditLog({ user: adminSession, action: "analytics.ai_insights", targetType: "vacancy", targetId: vacancyCode, vacancyCode });
     return sendJson(res, 200, { insights });
   }

@@ -250,12 +250,12 @@ function recommendationByScore(score, flags, thresholds = {}) {
   const orange = thresholds.orange ?? 50;
   const hasHardRed = flags.some(flag => flag.severity === "red");
   if (hasHardRed && score < green) {
-    return { code: "red", label: "Red", status: "отказ / сильный риск", action: "Не приглашать без ручной причины." };
+    return { code: "red", label: "отказ", status: "отказ / сильный риск", action: "Не приглашать без ручной причины." };
   }
-  if (score >= green) return { code: "green", label: "Green", status: "рекомендовано интервью", action: "Пригласить на первичное интервью." };
-  if (score >= yellow) return { code: "yellow", label: "Yellow", status: "ручная проверка HR", action: "Проверить портфолио и 1-2 риска." };
-  if (score >= orange) return { code: "orange", label: "Orange", status: "talent pool", action: "Оставить в резерве или звать при дефиците." };
-  return { code: "red", label: "Red", status: "отказ", action: "Отказать на первом этапе." };
+  if (score >= green) return { code: "green", label: "сильный кандидат", status: "рекомендовано интервью", action: "Пригласить на первичное интервью." };
+  if (score >= yellow) return { code: "yellow", label: "ручная проверка", status: "ручная проверка HR", action: "Проверить портфолио и 1-2 риска." };
+  if (score >= orange) return { code: "orange", label: "резерв", status: "резерв кандидатов", action: "Оставить в резерве или звать при дефиците." };
+  return { code: "red", label: "отказ", status: "отказ", action: "Отказать на первом этапе." };
 }
 
 function makeStrengths(answers, score) {
@@ -264,9 +264,9 @@ function makeStrengths(answers, score) {
   if (selectedIncludes(answers, "responsibilities", "leadgen")) strengths.push("есть опыт лидогенерации");
   if (selectedIncludes(answers, "responsibilities", "analyticsReports") || selectedIncludes(answers, "metrics", "ctrUtm")) strengths.push("работает с аналитикой и отчетами");
   if (selectedIncludes(answers, "tools", "autopostingServices")) strengths.push("знает автопостинг");
-  if (selectedIncludes(answers, "tools", "textAi")) strengths.push("использует AI-инструменты");
+  if (selectedIncludes(answers, "tools", "textAi")) strengths.push("использует нейросетевые инструменты");
   if (score.blocks.culture >= 17) strengths.push("хорошие поведенческие признаки: ответственность и обратная связь");
-  if (score.openScores.contentCase >= 8) strengths.push("мини-кейс показывает системное SMM-мышление");
+  if (score.openScores.contentCase >= 8) strengths.push("мини-кейс показывает системное мышление в работе с соцсетями");
   return strengths.length ? strengths : ["есть базовые признаки соответствия, требуется ручная проверка"];
 }
 
@@ -370,7 +370,7 @@ function scoreSubmission(payload, config = defaultConfig) {
   const salary = salaryStatus(candidate.income, vacancyMin, vacancyMax);
 
   const flags = [];
-  pushFlag(flags, answers.experienceYears === "less1", "опыт SMM менее 1 года");
+  pushFlag(flags, answers.experienceYears === "less1", "опыт работы с соцсетями менее 1 года");
   pushFlag(flags, answers.projectExperience === "lt6", "опыт проектной координации менее 6 месяцев");
   pushFlag(flags, portfolio === 0, "нет портфолио, ссылок или примеров проектов");
   if (config.vacancyCode !== "project-manager") {
@@ -498,7 +498,7 @@ function buildFlowAnalytics(submissions, events = []) {
     recommendations.push("Среднее число стоп-факторов высокое. Возможно, канал привлечения дает слишком широкий нерелевантный поток.");
   }
   if (!recommendations.length) {
-    recommendations.push("Поток выглядит рабочим. Следующий шаг: сравнить портфолио Green/Yellow и уточнить интервью-гайд.");
+    recommendations.push("Поток выглядит рабочим. Следующий шаг: сравнить портфолио сильных кандидатов и кандидатов на ручной проверке, затем уточнить сценарий интервью.");
   }
 
   return {
@@ -516,12 +516,12 @@ function buildFlowAnalytics(submissions, events = []) {
     topTools: topValues(submissions, "tools"),
     topMetrics: topValues(submissions, "metrics"),
     summary: total
-      ? `Получено анкет: ${total}. Средний балл: ${avgScore}/100. Green: ${statusCounts.green || 0}, Yellow: ${statusCounts.yellow || 0}, Orange: ${statusCounts.orange || 0}, Red: ${statusCounts.red || 0}.`
+      ? `Получено анкет: ${total}. Средний балл: ${avgScore}/100. Сильных кандидатов: ${statusCounts.green || 0}, ручная проверка: ${statusCounts.yellow || 0}, резерв: ${statusCounts.orange || 0}, отказ: ${statusCounts.red || 0}.`
       : "Анкеты еще не заполнены.",
     recommendations,
     marketRisks: [
-      greenShare < 20 && total >= 5 ? "Мало кандидатов уровня Green: может быть слабый канал найма или завышены требования." : null,
-      analyticsGap > 0 ? "Часть кандидатов воспринимает SMM как постинг без аналитики." : null
+      greenShare < 20 && total >= 5 ? "Мало сильных кандидатов: может быть слабый канал найма или завышены требования." : null,
+      analyticsGap > 0 ? "Часть кандидатов воспринимает работу с соцсетями как публикацию материалов без аналитики." : null
     ].filter(Boolean)
   };
 }

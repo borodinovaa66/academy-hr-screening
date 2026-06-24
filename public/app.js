@@ -25,15 +25,15 @@ let labels = {
     more5: "Более 5 лет"
   },
   projectTypes: {
-    b2b: "B2B",
+    b2b: "Корпоративные проекты",
     expert: "Экспертные продукты",
     education: "Образовательные проекты",
     consulting: "Консалтинг / услуги",
     premium: "Премиальные продукты",
-    b2c: "B2C",
+    b2c: "Проекты для массового потребителя",
     personalBrand: "Личный бренд",
-    ecommerce: "E-commerce",
-    lifestyle: "Развлекательные / лайфстайл",
+    ecommerce: "Интернет-магазины",
+    lifestyle: "Развлекательные проекты",
     other: "Другое"
   },
   socialNetworks: {
@@ -59,8 +59,8 @@ let labels = {
     expertContent: "Сборка из экспертных материалов",
     contentPlanning: "Контент-планирование",
     basicDesign: "Базовый дизайн / верстка",
-    stories: "Stories / интерактивы",
-    reels: "Reels / Shorts",
+    stories: "Истории / интерактивы",
+    reels: "Короткие вертикальные видео",
     autoposting: "Автопостинг",
     analyticsReports: "Аналитика и отчеты",
     growth: "Рост подписчиков / вовлеченности",
@@ -73,7 +73,7 @@ let labels = {
     adaptTexts: "Адаптировать тексты",
     basicDesign: "Базовый дизайн и верстка",
     autoposting: "Настраивать автопостинг",
-    qualityCheck: "Проверять ссылки, CTA, UTM",
+    qualityCheck: "Проверять ссылки, призывы к действию и метки ссылок",
     statistics: "Анализировать статистику",
     growthHypotheses: "Предлагать гипотезы роста",
     competitorsTrends: "Мониторить конкурентов и тренды",
@@ -83,17 +83,17 @@ let labels = {
   tools: {
     canva: "Canva",
     figma: "Figma",
-    capcut: "CapCut / видеоредактор",
+    capcut: "Видеоредактор",
     autopostingServices: "Сервисы автопостинга",
-    sheets: "Google Sheets / Excel",
-    projectTools: "Notion / Trello / Asana / ClickUp",
-    textAi: "ChatGPT / текстовые ИИ",
+    sheets: "Электронные таблицы",
+    projectTools: "Сервисы управления задачами",
+    textAi: "Текстовые нейросети",
     visualAi: "ИИ для визуалов",
     socialAnalytics: "Аналитика соцсетей",
     noTools: "Не использую проф. инструменты"
   },
   soloDesign: {
-    stories: "Оформить stories",
+    stories: "Оформить истории",
     carousel: "Сверстать карусель",
     cover: "Сделать обложку",
     banner: "Подготовить баннер",
@@ -103,26 +103,26 @@ let labels = {
   },
   metrics: {
     reach: "Охваты / показы",
-    er: "ER / вовлеченность",
+    er: "Уровень вовлеченности",
     saves: "Сохранения / репосты",
     comments: "Комментарии и реакции",
     videoRetention: "Досмотры / удержание",
     clicks: "Переходы",
     follows: "Подписки / отписки",
     leads: "Заявки / лиды",
-    ctrUtm: "CTR / UTM / конверсии",
+    ctrUtm: "Кликабельность, метки ссылок и конверсии",
     leadQuality: "Качество лидов",
     noAnalytics: "Не работал(а) с аналитикой"
   },
   noLeadsActions: {
     audienceQuality: "Проверю качество аудитории",
-    ctaOffer: "Проверю CTA и оффер",
+    ctaOffer: "Проверю призыв к действию и предложение",
     userPath: "Проверю путь пользователя",
     funnelConversion: "Проверю конверсии этапов",
     wrongReachTopics: "Найду темы с нецелевым охватом",
     funnelHypotheses: "Предложу гипотезы по воронке",
     morePosts: "Увеличу количество постов",
-    notResponsible: "SMM не отвечает за заявки",
+    notResponsible: "специалист по соцсетям не отвечает за заявки",
     adsNoAnalysis: "Запущу рекламу без анализа"
   },
   trendFrequency: {
@@ -184,7 +184,7 @@ let questions = [
   { id: "fullName", title: "Как вас зовут?", type: "namePair", required: true },
   { id: "contacts", title: "Как с вами связаться?", type: "contactPair", required: true },
   { id: "portfolio", title: "Прикрепите файл или ссылку на документ с вашим резюме", type: "text", required: true, placeholder: "Ссылка на резюме или файл" },
-  { section: "Релевантный опыт", id: "experienceYears", title: "Сколько лет вы работаете в SMM?", type: "radio", required: true },
+  { section: "Релевантный опыт", id: "experienceYears", title: "Сколько лет вы работаете с соцсетями?", type: "radio", required: true },
   { id: "projectTypes", title: "Какие типы проектов вы вели?", type: "checkbox", maxPick: 6 },
   { id: "socialNetworks", title: "Какие соцсети вы вели лично?", type: "checkbox" },
   { id: "platformsCount", title: "Сколько площадок вы вели одновременно?", type: "radio", required: true },
@@ -196,7 +196,7 @@ let questions = [
   { section: "Аналитика, рост, тренды", id: "metrics", title: "С какими метриками вы регулярно работали?", type: "checkbox" },
   { id: "noLeadsActions", title: "Что вы сделаете, если охваты растут, а заявок нет?", type: "checkbox" },
   { id: "trendFrequency", title: "Как часто вы отслеживаете конкурентов, референсы и тренды?", type: "radio", required: true },
-  { id: "innovation", title: "Что нового вы внедрили в SMM за последние 3-6 месяцев?", type: "textarea", max: 500, required: true },
+  { id: "innovation", title: "Что нового вы внедрили в работе с соцсетями за последние 3-6 месяцев?", type: "textarea", max: 500, required: true },
   { section: "Культура и рабочее поведение", id: "deadlineBehavior", title: "Что вы делаете, если понимаете, что не успеваете к дедлайну?", type: "radio", required: true },
   { id: "weakPlanBehavior", title: "Что вы делаете, если видите, что текущий контент-план не даст результата?", type: "radio", required: true },
   { id: "feedbackBehavior", title: "Как вы реагируете на прямую обратную связь по своей работе?", type: "radio", required: true },
@@ -534,7 +534,7 @@ function guideForQuestion(index, q) {
     soloDesign: "Нужно понять, какие визуальные задачи вы закрываете без дизайнера.",
     metrics: "Метрики показывают, управляете ли вы результатом, а не только публикациями.",
     noLeadsActions: "Этот вопрос про системное мышление в воронке.",
-    trendFrequency: "SMM быстро меняется, поэтому важно видеть рынок и референсы.",
+    trendFrequency: "Работа с соцсетями быстро меняется, поэтому важно видеть рынок и референсы.",
     innovation: "Расскажите про реальное внедрение, а не просто наблюдение за трендами.",
     deadlineBehavior: "Дедлайны проверяют ответственность и коммуникацию.",
     weakPlanBehavior: "Здесь важна проактивность: заметить проблему и предложить решение.",
@@ -551,13 +551,88 @@ function guideForQuestion(index, q) {
   };
 }
 
+const VALUE_LABEL_OVERRIDES = {
+  b2b: "Корпоративные проекты",
+  b2c: "Проекты для массового потребителя",
+  expert: "Экспертные продукты",
+  education: "Образовательные проекты",
+  consulting: "Консалтинг / услуги",
+  premium: "Премиальные продукты",
+  personalBrand: "Личный бренд",
+  ecommerce: "Интернет-магазины",
+  lifestyle: "Развлекательные проекты",
+  reach: "Охваты и показы",
+  er: "Уровень вовлеченности",
+  saves: "Сохранения и репосты",
+  follows: "Подписки и отписки",
+  portfolio: "Резюме и портфолио",
+  experience: "Релевантный опыт",
+  responsibilities: "Зона ответственности",
+  contentCase: "Практический мини-кейс",
+  practicalCases: "Практические ситуации",
+  tools: "Инструменты",
+  analytics: "Аналитика и рост",
+  culture: "Рабочее поведение",
+  green: "сильный кандидат",
+  yellow: "ручная проверка",
+  orange: "резерв",
+  red: "отказ",
+  Green: "сильный кандидат",
+  Yellow: "ручная проверка",
+  Orange: "резерв",
+  Red: "отказ"
+};
+
+const FIELD_LABEL_OVERRIDES = {
+  projectTypes: {
+    b2b: "Корпоративные проекты",
+    b2c: "Проекты для массового потребителя",
+    ecommerce: "Интернет-магазины",
+    lifestyle: "Развлекательные проекты"
+  },
+  responsibilities: {
+    stories: "Истории / интерактивы",
+    reels: "Короткие вертикальные видео"
+  },
+  readiness: {
+    qualityCheck: "Проверять ссылки, призывы к действию и метки ссылок"
+  },
+  tools: {
+    capcut: "Видеоредактор",
+    sheets: "Электронные таблицы",
+    projectTools: "Сервисы управления задачами",
+    textAi: "Текстовые нейросети"
+  },
+  soloDesign: {
+    stories: "Оформить истории"
+  },
+  metrics: {
+    er: "Уровень вовлеченности",
+    ctrUtm: "Кликабельность, метки ссылок и конверсии"
+  },
+  noLeadsActions: {
+    ctaOffer: "Проверю призыв к действию и предложение",
+    notResponsible: "специалист по соцсетям не отвечает за заявки"
+  }
+};
+
 function optionLabel(field, value) {
-  return labels[field]?.[value] || value || "—";
+  return FIELD_LABEL_OVERRIDES[field]?.[value] || labels[field]?.[value] || VALUE_LABEL_OVERRIDES[value] || value || "—";
 }
 
 function selectedText(field, values) {
   const list = Array.isArray(values) ? values : [values];
   return list.filter(Boolean).map(value => optionLabel(field, value)).join(", ") || "—";
+}
+
+function recommendationLabel(recommendation = {}) {
+  return VALUE_LABEL_OVERRIDES[recommendation.label] || VALUE_LABEL_OVERRIDES[recommendation.code] || recommendation.label || "ручная проверка";
+}
+
+function modelModeLabel(mode) {
+  if (mode === "yandex") return "Яндекс GPT";
+  if (mode === "openai" || mode === "ai") return "Внешняя нейросеть";
+  return "Локальная оценка";
 }
 
 function applyConfig(config) {
@@ -700,7 +775,7 @@ function field(q) {
   if (q.type === "contactPair") {
     return el("div", { class: "name-grid" }, [
       el("label", { class: "named-input" }, [
-        el("span", {}, ["Email"]),
+        el("span", {}, ["Электронная почта"]),
         el("input", {
           class: "input",
           type: "email",
@@ -897,12 +972,12 @@ function candidateView() {
   const guide = guideForQuestion(state.currentStep, q);
   return el("main", { class: "chat-shell" }, [
     el("section", { class: "chat-top" }, [
-      el("a", { class: "brand", href: "#candidate" }, [iconEl("spark"), "HR Screening"]),
+      el("a", { class: "brand", href: "#candidate" }, [iconEl("spark"), "Платформа подбора"]),
       brandMark()
     ]),
     el("form", { class: "chat-stage", onsubmit: submitCandidate }, [
       el("aside", { class: "guide-panel" }, [
-        el("img", { src: guide.image, alt: "SMM guide", class: "guide-character" }),
+        el("img", { src: guide.image, alt: "Помощник анкеты", class: "guide-character" }),
         el("div", { class: "guide-caption" }, [
           el("span", {}, [guide.caption])
         ])
@@ -1102,7 +1177,7 @@ function testInviteView(result) {
           el("span", { class: "pill blue" }, ["порог пройден"]),
           el("span", { class: "pill yellow" }, ["следующий шаг — практика"])
         ]),
-        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`]),
+        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${recommendationLabel(result.recommendation)}`]),
         el("a", { class: "btn primary final-done", href: result.nextStep.testAssignmentUrl }, ["Показать себя в деле", iconEl("arrow")]),
         telegramConnectBlock(result)
       ]),
@@ -1130,7 +1205,7 @@ function softDeclineView(result) {
           el("span", { class: "pill yellow" }, ["решение по первому этапу"]),
           el("span", { class: "pill green" }, ["спасибо за время"])
         ]),
-        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${result.recommendation.label}`]),
+        el("div", { class: `status-pill ${result.recommendation.code}` }, [`Статус в системе: ${recommendationLabel(result.recommendation)}`]),
         telegramConnectBlock(result)
       ]),
       el("aside", { class: "final-visual" }, [
@@ -1432,7 +1507,7 @@ function adminSidebar() {
     el("div", { class: "admin-menu-group" }, [
       el("span", { class: "admin-menu-title" }, ["Вакансии"]),
       ...(vacancies.length ? vacancies.map(([code, vacancy]) => adminVacancyButton(code, vacancy)) : [
-        adminVacancyButton("smm", { adminTitle: "SMM" }),
+        adminVacancyButton("smm", { adminTitle: "Соцсети" }),
         adminVacancyButton("project-manager", { adminTitle: "Проджект" })
       ])
     ])
@@ -1505,8 +1580,8 @@ function adminOverviewView() {
     el("header", { class: "dash-header overview-hero" }, [
       el("div", {}, [
         el("div", { class: "badge" }, [iconEl("chart"), "Общий центр подбора"]),
-        el("h1", {}, ["HR Screening"]),
-        el("p", {}, ["Здесь общий вход в систему подбора: вакансии, запуски, кандидаты, HeadHunter, сотрудники и журнал действий. Конкретная SMM-воронка открывается отдельно через список вакансий."])
+        el("h1", {}, ["Платформа подбора"]),
+        el("p", {}, ["Здесь общий вход в систему подбора: вакансии, запуски, кандидаты, hh.ru, сотрудники и журнал действий. Конкретная воронка по соцсетям открывается отдельно через список вакансий."])
       ])
     ]),
     el("div", { class: "overview-metrics" }, [
@@ -1749,7 +1824,7 @@ async function runAiInsights() {
   render();
   const response = await fetch(`/api/admin/ai-insights?vacancy=${encodeURIComponent(state.adminVacancyCode || "smm")}`, { method: "POST" });
   state.loading = false;
-  if (!response.ok) return showToast("AI-анализ не запустился.");
+  if (!response.ok) return showToast("Анализ нейросетью не запустился.");
   state.aiInsights = (await response.json()).insights;
   render();
 }
@@ -1921,7 +1996,7 @@ async function evaluateInterviewDraft(candidate) {
   const data = await response.json();
   updateSubmissionInState(data.submission);
   await loadAdmin();
-  showToast("AI-оценка интервью готова.");
+  showToast("Оценка интервью нейросетью готова.");
   render();
 }
 
@@ -2176,9 +2251,9 @@ function interviewDecisionFields(candidate, draft, interview) {
 function interviewEvaluationPanel(candidate, draft) {
   const evaluation = draft.evaluation || candidate?.interview?.evaluation;
   return el("section", { class: "interview-form-section interview-result" }, [
-    el("h3", {}, ["AI-оценка интервью"]),
+    el("h3", {}, ["Оценка интервью нейросетью"]),
     evaluation ? el("div", { class: "ai-box" }, [
-      el("span", { class: "mode" }, [evaluation.mode === "yandex" ? "YandexGPT" : evaluation.mode === "openai" ? "OpenAI" : "Локальная оценка"]),
+      el("span", { class: "mode" }, [modelModeLabel(evaluation.mode)]),
       answerLine("Балл интервью", `${evaluation.score || 0}/100`),
       el("p", {}, [evaluation.summary || ""]),
       ...(evaluation.strengths || []).map(text => el("p", {}, [`Сильная сторона: ${text}`])),
@@ -2186,7 +2261,7 @@ function interviewEvaluationPanel(candidate, draft) {
       evaluation.recommendation ? el("p", {}, [`Решение: ${evaluation.recommendation}`]) : el("div"),
       ...(evaluation.nextSteps || []).map(text => el("p", {}, [`Следующий шаг: ${text}`])),
       ...(evaluation.interviewQuestionsToClarify || []).map(text => el("p", {}, [`Уточнить: ${text}`]))
-    ]) : el("p", { class: "muted" }, ["Заполните оценочный лист и запустите AI-оценку. Если AI недоступен, система посчитает локальную оценку по баллам 1-5."])
+    ]) : el("p", { class: "muted" }, ["Заполните оценочный лист и запустите оценку нейросетью. Если нейросеть недоступна, система посчитает локальную оценку по баллам 1-5."])
   ]);
 }
 
@@ -2278,10 +2353,10 @@ function funnelPanel(analytics) {
 function statusChart(analytics) {
   const total = Math.max(analytics.total || 0, 1);
   const rows = [
-    ["Green", analytics.statusCounts?.green || 0, "green"],
-    ["Yellow", analytics.statusCounts?.yellow || 0, "yellow"],
-    ["Orange", analytics.statusCounts?.orange || 0, "orange"],
-    ["Red", analytics.statusCounts?.red || 0, "red"]
+    ["Сильные кандидаты", analytics.statusCounts?.green || 0, "green"],
+    ["Ручная проверка", analytics.statusCounts?.yellow || 0, "yellow"],
+    ["Резерв", analytics.statusCounts?.orange || 0, "orange"],
+    ["Отказ", analytics.statusCounts?.red || 0, "red"]
   ];
   return el("section", { class: "chart-panel" }, [
     el("div", { class: "panel-head" }, [
@@ -2342,7 +2417,7 @@ function analyticsDashboardView(analytics) {
         el("h1", {}, ["Визуальная аналитика"]),
         el("p", {}, ["Здесь видно, сколько кандидатов заходит, где они доходят до конца и какого качества получается поток."])
       ]),
-      el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "AI-выводы"])
+      el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Выводы нейросети"])
     ]),
     el("div", { class: "analytics-grid" }, [
       funnelPanel(analytics),
@@ -2356,12 +2431,12 @@ function analyticsDashboardView(analytics) {
         el("h2", {}, ["Выводы"]),
         ...(analytics.recommendations || []).map(text => el("p", {}, [text])),
         state.aiInsights ? el("div", { class: "ai-box" }, [
-          el("span", { class: "mode" }, [state.aiInsights.mode === "yandex" ? "YandexGPT" : state.aiInsights.mode === "ai" ? "OpenAI" : "Локальная аналитика"]),
+          el("span", { class: "mode" }, [modelModeLabel(state.aiInsights.mode)]),
           el("strong", {}, [state.aiInsights.summary || ""]),
           ...(state.aiInsights.recommendations || []).map(text => el("p", {}, [text])),
           ...(state.aiInsights.interviewFocus || []).map(text => el("p", {}, [`Интервью: ${text}`])),
           ...(state.aiInsights.risks || []).map(text => el("p", { class: "risk-text" }, [text]))
-        ]) : el("p", { class: "muted" }, ["Нажмите AI-выводы, чтобы получить интерпретацию потока через YandexGPT."])
+        ]) : el("p", { class: "muted" }, ["Нажмите выводы нейросети, чтобы получить интерпретацию потока через подключенную модель."])
       ])
     ])
   ]);
@@ -2572,7 +2647,7 @@ function auditLogView() {
       el("div", {}, [
         el("div", { class: "badge" }, [iconEl("list"), "Контроль"]),
         el("h1", {}, ["Журнал действий"]),
-        el("p", {}, ["Здесь фиксируются входы, изменения сотрудников, удаление кандидатов, AI-анализ и оценка тестовых."])
+        el("p", {}, ["Здесь фиксируются входы, изменения сотрудников, удаление кандидатов, анализ нейросетью и оценка тестовых."])
       ])
     ]),
     el("section", { class: "table-panel" }, [
@@ -2602,7 +2677,7 @@ function auditActionLabel(action) {
     "submission.delete": "Удаление кандидата",
     "test_assignment.evaluate": "Оценка тестового",
     "test_assignment.manual_review": "Оценка руководителя",
-    "analytics.ai_insights": "AI-анализ потока",
+    "analytics.ai_insights": "Анализ потока нейросетью",
     "config.update": "Изменение методологии"
   };
   return labels[action] || action;
@@ -2724,7 +2799,7 @@ async function attachExistingHhVacancy() {
   const vacancyCode = String(form.vacancyCode || "").trim();
   const url = String(form.url || "").trim();
   const hhVacancyId = String(form.hhVacancyId || extractHhVacancyId(url) || "").trim();
-  if (!vacancyCode) return showToast("Выберите вакансию на нашей платформе: SMM или Проджект.");
+  if (!vacancyCode) return showToast("Выберите вакансию на нашей платформе: специалист по соцсетям или менеджер проектов.");
   if (!hhVacancyId) return showToast("Вставьте ссылку на вакансию HeadHunter или ее ID.");
   const response = await fetch("/api/admin/hh-publications", {
     method: "POST",
@@ -2766,7 +2841,7 @@ async function setupHhWebhook() {
     return showToast(error.error || "Не удалось настроить webhook HeadHunter.");
   }
   await loadAdmin();
-  showToast("Webhook HeadHunter настроен.");
+  showToast("Автоматический прием событий hh.ru настроен.");
   render();
 }
 
@@ -2966,18 +3041,18 @@ function headHunterDashboardView() {
           el("span", {}, [status.account?.me?.email || status.account?.me?.first_name || "нет данных аккаунта"])
         ]),
         el("div", {}, [status.account?.me?.auth_type || status.account?.status || "disconnected"]),
-        el("div", {}, [status.redirectUri || "redirect URI не задан"]),
-        el("div", {}, [status.userAgent || "user-agent не задан"])
+        el("div", {}, [status.redirectUri || "адрес возврата не задан"]),
+        el("div", {}, [status.userAgent || "идентификатор приложения не задан"])
       ]),
       connected && !isEmployerAccount ? el("div", { class: "empty danger-note" }, [
         "Сейчас подключен аккаунт соискателя. Для откликов, сообщений и webhook нужно нажать “Переподключить HeadHunter” и авторизоваться именно под работодателем/менеджером вакансий."
       ]) : el("div"),
       el("div", { class: "staff-row" }, [
         el("div", {}, [
-          el("strong", {}, [status.webhook?.configured ? "Webhook HH настроен" : "Webhook HH не настроен"]),
+          el("strong", {}, [status.webhook?.configured ? "Автоматический прием событий hh.ru настроен" : "Автоматический прием событий hh.ru не настроен"]),
           el("span", {}, [status.webhook?.subscriptionId ? `Подписка: ${status.webhook.subscriptionId}` : "события от HH пока не приходят автоматически"])
         ]),
-        el("div", {}, [status.webhookConfigured ? "endpoint готов" : "не задан HH_WEBHOOK_SECRET"]),
+        el("div", {}, [status.webhookConfigured ? "адрес приема событий готов" : "не задан секрет приема событий hh.ru"]),
         el("div", {}, [status.webhook?.actions?.join(", ") || "NEW_NEGOTIATION_VACANCY"]),
         isHrOrOwner() ? el("button", { class: "btn ghost", onclick: setupHhWebhook }, [
           status.webhook?.configured ? "Обновить webhook" : "Настроить webhook"
@@ -3252,13 +3327,13 @@ function adminView() {
             el("h1", {}, [state.adminSection === "vacancies" ? `Вакансия: ${currentVacancyTitle}` : "Дашборд кандидатов"]),
             el("p", {}, [analytics.summary || "Загрузка..."])
           ]),
-          el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "AI-анализ потока"])
+          el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Анализ потока нейросетью"])
         ]),
         el("div", { class: "kpi-grid" }, [
           kpi("Анкет", analytics.total),
           kpi("Средний балл", `${analytics.avgScore}/100`),
-          kpi("Green", analytics.statusCounts.green || 0, "green"),
-          kpi("Yellow", analytics.statusCounts.yellow || 0, "yellow")
+          kpi("Сильные", analytics.statusCounts.green || 0, "green"),
+          kpi("Проверка", analytics.statusCounts.yellow || 0, "yellow")
         ]),
         statusBar(analytics),
         vacancyMetricsDashboard(analytics),
@@ -3270,11 +3345,11 @@ function adminView() {
           el("h2", {}, ["Рекомендации"]),
           ...(analytics.recommendations || []).map(text => el("p", {}, [text])),
           state.aiInsights ? el("div", { class: "ai-box" }, [
-            el("span", { class: "mode" }, [state.aiInsights.mode === "yandex" ? "YandexGPT" : state.aiInsights.mode === "ai" ? "OpenAI" : "Локальная аналитика"]),
+            el("span", { class: "mode" }, [modelModeLabel(state.aiInsights.mode)]),
             el("strong", {}, [state.aiInsights.summary || ""]),
             ...(state.aiInsights.recommendations || []).map(text => el("p", {}, [text])),
             ...(state.aiInsights.risks || []).map(text => el("p", { class: "risk-text" }, [text]))
-          ]) : el("p", { class: "muted" }, ["AI-блок подключен через YandexGPT. Нажмите AI-анализ потока, чтобы получить выводы."])
+          ]) : el("p", { class: "muted" }, ["Нейросетевой блок подключен. Нажмите анализ потока, чтобы получить выводы."])
         ]),
         analyticsList("Типы проектов", analytics.topProjectTypes || [], "projectTypes"),
         analyticsList("Инструменты", analytics.topTools || [], "tools"),
@@ -3283,7 +3358,7 @@ function adminView() {
     ]);
   return el("main", { class: "admin-shell" }, [
     el("nav", { class: "topbar" }, [
-      el("a", { class: "brand", href: "#candidate" }, [iconEl("chart"), "HR Screening"]),
+      el("a", { class: "brand", href: "#candidate" }, [iconEl("chart"), "Платформа подбора"]),
       el("div", { class: "top-actions" }, [
         el("button", { class: "btn ghost", onclick: async () => { await loadAdmin(); render(); } }, ["Обновить"]),
         el("button", { class: "btn danger", onclick: async () => {
@@ -3396,7 +3471,7 @@ function communicationEventText(eventType) {
 }
 
 function communicationChannelText(channel) {
-  if (channel === "email") return "Email";
+  if (channel === "email") return "Электронная почта";
   if (channel === "telegram") return "Telegram";
   return channel || "—";
 }
@@ -3470,7 +3545,7 @@ function profileDrawer(item) {
           el("h2", {}, [item.candidate.fullName || "Без имени"]),
           el("p", {}, [item.candidate.contacts || "Контакты не указаны"]),
           el("p", {}, [`Вакансия: ${vacancyLabel(item.vacancyCode || state.adminVacancyCode)}`]),
-          el("div", { class: `status-pill ${item.recommendation.code}` }, [`${item.recommendation.label} — ${item.recommendation.status}`])
+          el("div", { class: `status-pill ${item.recommendation.code}` }, [`${recommendationLabel(item.recommendation)} — ${item.recommendation.status}`])
         ])
       ]),
       el("section", { class: "profile-section" }, [
@@ -3550,7 +3625,7 @@ function testAssignmentEvaluationBlock(item) {
       el("strong", {}, [`Итог тестового: ${review.finalScore}/100`]),
       el("span", {}, [review.formula || ""]),
       review.comparisonLabel ? el("em", {}, [review.difference === null ? review.comparisonLabel : `${review.comparisonLabel}. Разница: ${review.difference} баллов.`]) : el("em")
-    ]) : el("p", { class: "muted" }, ["Ждем оценку тестового. Нужна ручная оценка руководителя и желательно AI-анализ."]),
+    ]) : el("p", { class: "muted" }, ["Ждем оценку тестового. Нужна ручная оценка руководителя и желательно анализ нейросетью."]),
     el("div", { class: "test-review-grid" }, [
       el("section", { class: "test-review-card" }, [
         el("h4", {}, ["Оценка руководителя"]),
@@ -3595,16 +3670,16 @@ function testAssignmentEvaluationBlock(item) {
         ]) : el("div")
       ]),
       el("section", { class: "test-review-card" }, [
-        el("h4", {}, ["AI-оценка"]),
+        el("h4", {}, ["Оценка нейросети"]),
         evaluation ? el("div", { class: "ai-box compact" }, [
-          el("span", { class: "mode" }, [evaluation.mode === "yandex" ? "YandexGPT" : evaluation.mode === "openai" ? "OpenAI" : "Локальная оценка"]),
+          el("span", { class: "mode" }, [modelModeLabel(evaluation.mode)]),
           answerLine("Балл", `${evaluation.score}/100`),
           el("p", {}, [evaluation.summary || ""]),
           ...(evaluation.strengths || []).map(text => el("p", {}, [`Сильная сторона: ${text}`])),
           ...(evaluation.risks || []).map(text => el("p", { class: "risk-text" }, [`Риск: ${text}`])),
           evaluation.recommendation ? el("p", {}, [`Рекомендация: ${evaluation.recommendation}`]) : el("div"),
           ...(evaluation.interviewQuestions || []).map(text => el("p", {}, [`Проверить на интервью: ${text}`]))
-        ]) : el("p", { class: "muted" }, ["AI-оценка еще не выполнена. После прикрепления результата запустите анализ тестового задания."]),
+        ]) : el("p", { class: "muted" }, ["Оценка нейросети еще не выполнена. После прикрепления результата запустите анализ тестового задания."]),
         canEvaluate ? el("button", {
           class: "btn primary",
           onclick: () => evaluateTestAssignmentForSelected(item.id)
@@ -3623,7 +3698,7 @@ function consentText(consent) {
 function testAssignmentStatus(testAssignment) {
   if (!testAssignment?.eligible) return "не назначалось";
   if (testAssignment.status === "evaluated") return "Оценено ИИ: есть анализ и балл тестового задания";
-  if (testAssignment.status === "manual_reviewed") return "Оценено руководителем: ожидает AI-оценку или сравнение";
+  if (testAssignment.status === "manual_reviewed") return "Оценено руководителем: ожидает оценку нейросети или сравнение";
   if (testAssignment.status === "submitted") return "Выполнено: кандидат прикрепил ссылку с результатом";
   if (testAssignment.status === "issued") return "Тестовое выдано: кандидат открыл страницу задания";
   if (testAssignment.status === "assigned") return "Назначено: кандидат получил переход к тестовому, страницу задания еще не открывал";
@@ -3659,7 +3734,7 @@ function siteFooter() {
       el("span", {}, [`ИНН ${OPERATOR.inn}`]),
       el("span", {}, [`ОГРНИП ${OPERATOR.ogrnip}`]),
       el("span", {}, [`Адрес: ${OPERATOR.address}`]),
-      el("span", {}, ["Email для обращений по персональным данным: ", el("a", { href: `mailto:${OPERATOR.email}` }, [OPERATOR.email])])
+      el("span", {}, ["Электронная почта для обращений по персональным данным: ", el("a", { href: `mailto:${OPERATOR.email}` }, [OPERATOR.email])])
     ]),
     el("nav", { class: "footer-links" }, [
       el("a", { href: "/privacy" }, ["Политика конфиденциальности"]),
@@ -3677,7 +3752,7 @@ function legalPage(kind) {
   const sections = isPrivacy ? privacySections() : consentSections();
   return el("main", { class: "legal-shell" }, [
     el("section", { class: "legal-top" }, [
-      el("a", { class: "brand", href: "/" }, [iconEl("spark"), "HR Screening"]),
+      el("a", { class: "brand", href: "/" }, [iconEl("spark"), "Платформа подбора"]),
       brandMark()
     ]),
     el("article", { class: "legal-card" }, [
@@ -3756,7 +3831,7 @@ function privacySections() {
         "Данные доступны только уполномоченным пользователям HR-службы, руководителям, участвующим в подборе, и техническим администраторам, которым доступ необходим для сопровождения сервиса.",
         "Персональные данные кандидатов не передаются клиентам и иным третьим лицам для самостоятельного использования.",
         "Для работы сервиса могут использоваться технические поставщики инфраструктуры: хостинг, домен, серверное администрирование, резервное копирование. Такие лица получают доступ только в объеме, необходимом для технического сопровождения.",
-        "AI-аналитика потока кандидатов в текущей версии должна выполняться по обезличенным или агрегированным данным без передачи ФИО, email, телефона и ссылок на резюме во внешние AI-сервисы."
+        "Аналитика потока кандидатов с помощью нейросети в текущей версии должна выполняться по обезличенным или агрегированным данным без передачи ФИО, электронной почты, телефона и ссылок на резюме во внешние нейросетевые сервисы."
       ]
     },
     {
@@ -3806,7 +3881,7 @@ function consentSections() {
     {
       title: "3. Цели обработки",
       items: [[
-        "первичный отбор кандидатов на позицию SMM-менеджера;",
+        "первичный отбор кандидатов на позицию специалиста по соцсетям;",
         "оценка профессионального соответствия роли;",
         "формирование карточки кандидата для HR-службы;",
         "связь с кандидатом по результатам рассмотрения анкеты;",
@@ -3831,11 +3906,11 @@ function consentSections() {
       ]]
     },
     {
-      title: "5. Автоматизированная обработка и AI-аналитика",
+      title: "5. Автоматизированная обработка и аналитика нейросетью",
       items: [
         "Я уведомлен(а), что ответы анкеты могут обрабатываться с применением автоматизированной скоринговой методологии для первичной оценки соответствия роли.",
         "Автоматическая оценка является вспомогательным инструментом HR-службы и не является единственным основанием для итогового кадрового решения.",
-        "Внешние AI-сервисы в текущей версии могут использоваться только для анализа обезличенных или агрегированных данных потока кандидатов без передачи ФИО, email, телефона и ссылок на резюме."
+        "Внешние нейросетевые сервисы в текущей версии могут использоваться только для анализа обезличенных или агрегированных данных потока кандидатов без передачи ФИО, электронной почты, телефона и ссылок на резюме."
       ]
     },
     {
