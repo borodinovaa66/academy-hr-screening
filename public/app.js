@@ -1273,13 +1273,17 @@ async function ensureAdminLoaded() {
   }
 }
 
-async function submitLogin() {
-  const username = state.loginUsername.trim();
-  const password = state.loginPassword;
+async function submitLogin(event = null) {
+  const form = event?.currentTarget || document.querySelector(".login-card");
+  const formData = form ? new FormData(form) : null;
+  const username = String(formData?.get("username") || state.loginUsername || "").trim();
+  const password = String(formData?.get("password") || state.loginPassword || "");
   if (!username || !password) {
     showToast("Введите логин и пароль.");
     return;
   }
+  state.loginUsername = username;
+  state.loginPassword = password;
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1304,7 +1308,7 @@ function loginView() {
       autocomplete: "on",
       onsubmit: event => {
         event.preventDefault();
-        submitLogin();
+        submitLogin(event);
       }
     }, [
       el("div", { class: "badge" }, [iconEl("user"), "Вход для команды"]),
