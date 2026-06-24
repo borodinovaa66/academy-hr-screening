@@ -1525,8 +1525,8 @@ function adminSidebar() {
     el("div", { class: "admin-menu-group" }, [
       el("span", { class: "admin-menu-title" }, ["Вакансии"]),
       ...(vacancies.length ? vacancies.map(([code, vacancy]) => adminVacancyButton(code, vacancy)) : [
-        adminVacancyButton("smm", { adminTitle: "Соцсети" }),
-        adminVacancyButton("project-manager", { adminTitle: "Проджект" })
+        adminVacancyButton("smm", { adminTitle: "SMM-менеджер" }),
+        adminVacancyButton("project-manager", { adminTitle: "Менеджер проектов" })
       ])
     ])
   ]);
