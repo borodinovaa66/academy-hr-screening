@@ -250,8 +250,12 @@ const state = {
   testViewedIds: new Set(),
   user: null,
   config: null,
+  adminConfigRoot: null,
   integrations: {},
   configText: "",
+  questionnaireDraft: null,
+  questionnaireDraftVacancyCode: "",
+  questionnaireSaving: false,
   adminSection: adminSectionFromHash(),
   adminVacancyCode: adminVacancyCodeFromHash(),
   adminUsers: [],
@@ -399,6 +403,10 @@ function isHrOrOwner() {
   return state.user?.role === "owner" || state.user?.role === "hr";
 }
 
+function canEditQuestionnaire() {
+  return isHrOrOwner();
+}
+
 function canStartRecruitment() {
   return isHrOrOwner() || state.user?.role === "hiring_manager";
 }
@@ -447,11 +455,17 @@ function extractHhVacancyId(value) {
 window.addEventListener("hashchange", () => {
   state.route = location.hash || "#candidate";
   if (state.route.startsWith("#admin")) {
+    const previousVacancyCode = state.adminVacancyCode;
     state.adminSection = adminSectionFromHash();
     state.adminVacancyCode = adminVacancyCodeFromHash();
     state.analytics = null;
     state.submissions = [];
     state.candidateListExpanded = false;
+    if (previousVacancyCode !== state.adminVacancyCode) {
+      state.config = null;
+      state.questionnaireDraft = null;
+      state.questionnaireDraftVacancyCode = "";
+    }
   }
   render();
 });
@@ -1333,12 +1347,18 @@ async function loadAdmin() {
   state.adminVacancyCode = subsData.vacancyCode || analyticsData.vacancyCode || state.adminVacancyCode;
   if (configResponse?.ok) {
     const configData = await configResponse.json();
+    state.adminConfigRoot = configData.config || state.adminConfigRoot;
     state.vacancies = configData.vacancies || state.vacancies;
     if (!state.vacancies[state.adminVacancyCode]) {
       state.adminVacancyCode = Object.keys(state.vacancies)[0] || state.adminVacancyCode;
     }
     const adminConfig = configData.config?.vacancies?.[state.adminVacancyCode] || configData.config;
-    if (adminConfig) applyConfig(adminConfig);
+    if (adminConfig) {
+      applyConfig(adminConfig);
+      if (state.questionnaireDraftVacancyCode !== state.adminVacancyCode) {
+        state.questionnaireDraft = null;
+      }
+    }
   }
   if (hiringRequestsResponse?.ok) state.hiringRequests = (await hiringRequestsResponse.json()).requests;
   if (openingsResponse?.ok) state.vacancyOpenings = (await openingsResponse.json()).openings;
@@ -1496,6 +1516,9 @@ function adminVacancyButton(code, vacancy) {
       state.selected = null;
       state.aiInsights = null;
       state.candidateListExpanded = false;
+      state.config = null;
+      state.questionnaireDraft = null;
+      state.questionnaireDraftVacancyCode = "";
       state.loading = true;
       render();
       await loadAdmin();
@@ -1571,6 +1594,9 @@ function overviewVacancyCard(code, vacancy) {
           history.replaceState(null, "", `#admin/${code}`);
           state.selected = null;
           state.aiInsights = null;
+          state.config = null;
+          state.questionnaireDraft = null;
+          state.questionnaireDraftVacancyCode = "";
           state.loading = true;
           render();
           await loadAdmin();
@@ -1662,6 +1688,300 @@ function adminQuestionnaireLinksPanel() {
         }, [iconEl("copy"), "Копировать"])
       ])
     ])
+  ]);
+}
+
+const QUESTION_TYPE_LABELS = {
+  namePair: "Имя и фамилия",
+  contactPair: "Электронная почта и телефон",
+  resumeAttachment: "Резюме или файл",
+  text: "Короткий текст",
+  textarea: "Развернутый ответ",
+  radio: "Один вариант ответа",
+  checkbox: "Несколько вариантов ответа",
+  questionRating: "Оценка понятности анкеты"
+};
+
+function cloneQuestionForEditor(question) {
+  return {
+    id: String(question.id || `customQuestion${Date.now()}`),
+    section: question.section || "",
+    title: question.title || "",
+    type: question.type || "text",
+    required: Boolean(question.required),
+    placeholder: question.placeholder || "",
+    max: question.max || "",
+    maxPick: question.maxPick || ""
+  };
+}
+
+function ensureQuestionnaireDraft() {
+  if (state.questionnaireDraft && state.questionnaireDraftVacancyCode === state.adminVacancyCode) return state.questionnaireDraft;
+  state.questionnaireDraft = (state.config?.questions || questions || []).map(cloneQuestionForEditor);
+  state.questionnaireDraftVacancyCode = state.adminVacancyCode;
+  return state.questionnaireDraft;
+}
+
+function updateQuestionnaireDraft(index, patch, rerender = true) {
+  const draft = ensureQuestionnaireDraft();
+  draft[index] = { ...draft[index], ...patch };
+  if (rerender) render();
+}
+
+function addQuestionnaireQuestion() {
+  const draft = ensureQuestionnaireDraft();
+  draft.push({
+    id: `customQuestion${Date.now()}`,
+    section: "Дополнительные вопросы",
+    title: "Новый вопрос",
+    type: "text",
+    required: true,
+    placeholder: "",
+    max: "",
+    maxPick: ""
+  });
+  render();
+}
+
+function deleteQuestionnaireQuestion(index) {
+  const draft = ensureQuestionnaireDraft();
+  const title = draft[index]?.title || `вопрос ${index + 1}`;
+  if (!confirm(`Удалить вопрос "${title}"?`)) return;
+  draft.splice(index, 1);
+  render();
+}
+
+function moveQuestionnaireQuestion(index, direction) {
+  const draft = ensureQuestionnaireDraft();
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= draft.length) return;
+  const [item] = draft.splice(index, 1);
+  draft.splice(nextIndex, 0, item);
+  render();
+}
+
+function sanitizedQuestionDraft(question) {
+  const result = {
+    id: String(question.id || `customQuestion${Date.now()}`).trim(),
+    title: String(question.title || "").trim(),
+    type: String(question.type || "text").trim(),
+    required: Boolean(question.required)
+  };
+  const section = String(question.section || "").trim();
+  const placeholder = String(question.placeholder || "").trim();
+  const max = Number(question.max);
+  const maxPick = Number(question.maxPick);
+  if (section) result.section = section;
+  if (placeholder) result.placeholder = placeholder;
+  if (Number.isFinite(max) && max > 0) result.max = Math.round(max);
+  if (Number.isFinite(maxPick) && maxPick > 0) result.maxPick = Math.round(maxPick);
+  return result;
+}
+
+function questionnaireDraftValidation(questionsToSave) {
+  if (!questionsToSave.length) return "В опроснике должен быть хотя бы один вопрос.";
+  const ids = new Set();
+  for (const item of questionsToSave) {
+    if (!item.title) return "У каждого вопроса должен быть текст.";
+    if (!QUESTION_TYPE_LABELS[item.type]) return `Неизвестный тип вопроса: ${item.type}.`;
+    if (ids.has(item.id)) return `Повторяется технический код вопроса: ${item.id}.`;
+    ids.add(item.id);
+    if ((item.type === "radio" || item.type === "checkbox") && !Object.keys(labels[item.id] || {}).length) {
+      return `Для закрытого вопроса "${item.title}" не найдены варианты ответа. Пока добавляйте новые вопросы как текстовые, либо отдельно обновите варианты и баллы в методологии.`;
+    }
+  }
+  return "";
+}
+
+async function saveQuestionnaireDraft() {
+  const draft = ensureQuestionnaireDraft();
+  const questionsToSave = draft.map(sanitizedQuestionDraft);
+  const validationError = questionnaireDraftValidation(questionsToSave);
+  if (validationError) {
+    showToast(validationError);
+    return;
+  }
+  state.questionnaireSaving = true;
+  render();
+  const response = await fetch(`/api/admin/vacancies/${encodeURIComponent(state.adminVacancyCode)}/questions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questions: questionsToSave })
+  });
+  state.questionnaireSaving = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить опросник." }));
+    showToast(error.error || "Не удалось сохранить опросник.");
+    render();
+    return;
+  }
+  const data = await response.json();
+  state.adminConfigRoot = data.rootConfig || state.adminConfigRoot;
+  state.vacancies = data.vacancies || state.vacancies;
+  if (data.config) applyConfig(data.config);
+  state.questionnaireDraft = (data.config?.questions || questionsToSave).map(cloneQuestionForEditor);
+  state.questionnaireDraftVacancyCode = state.adminVacancyCode;
+  showToast("Опросник сохранен.");
+  render();
+}
+
+function questionnaireTypeSelect(question, index, editable) {
+  return el("select", {
+    class: "input",
+    disabled: editable ? null : "disabled",
+    onchange: event => updateQuestionnaireDraft(index, { type: event.target.value })
+  }, Object.entries(QUESTION_TYPE_LABELS).map(([value, label]) => (
+    el("option", { value, selected: question.type === value ? "selected" : null }, [label])
+  )));
+}
+
+function questionEditorCard(question, index, total, editable) {
+  const hasChoices = Object.keys(labels[question.id] || {}).length > 0;
+  const needsChoices = question.type === "radio" || question.type === "checkbox";
+  return el("article", { class: "question-editor-card" }, [
+    el("div", { class: "question-editor-head" }, [
+      el("div", { class: "question-number" }, [`${index + 1}`]),
+      el("div", {}, [
+        el("strong", {}, [question.title || "Вопрос без текста"]),
+        el("span", {}, [QUESTION_TYPE_LABELS[question.type] || "Тип не задан"])
+      ]),
+      el("div", { class: "question-editor-actions" }, [
+        el("button", {
+          class: "btn ghost icon-btn",
+          type: "button",
+          disabled: !editable || index === 0 ? "disabled" : null,
+          title: "Поднять вопрос выше",
+          onclick: () => moveQuestionnaireQuestion(index, -1)
+        }, ["↑"]),
+        el("button", {
+          class: "btn ghost icon-btn",
+          type: "button",
+          disabled: !editable || index === total - 1 ? "disabled" : null,
+          title: "Опустить вопрос ниже",
+          onclick: () => moveQuestionnaireQuestion(index, 1)
+        }, ["↓"]),
+        el("button", {
+          class: "btn ghost icon-btn danger-lite",
+          type: "button",
+          disabled: !editable ? "disabled" : null,
+          title: "Удалить вопрос",
+          onclick: () => deleteQuestionnaireQuestion(index)
+        }, [iconEl("trash")])
+      ])
+    ]),
+    el("div", { class: "question-editor-grid" }, [
+      el("label", { class: "named-input question-title-field" }, [
+        el("span", {}, ["Текст вопроса"]),
+        el("textarea", {
+          class: "input question-title-input",
+          disabled: editable ? null : "disabled",
+          oninput: event => updateQuestionnaireDraft(index, { title: event.target.value }, false)
+        }, [question.title || ""])
+      ]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Тип ответа"]),
+        questionnaireTypeSelect(question, index, editable)
+      ]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Раздел"]),
+        el("input", {
+          class: "input",
+          disabled: editable ? null : "disabled",
+          value: question.section || "",
+          placeholder: "Например: Опыт",
+          oninput: event => updateQuestionnaireDraft(index, { section: event.target.value }, false)
+        })
+      ]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Подсказка в поле"]),
+        el("input", {
+          class: "input",
+          disabled: editable ? null : "disabled",
+          value: question.placeholder || "",
+          placeholder: "Необязательно",
+          oninput: event => updateQuestionnaireDraft(index, { placeholder: event.target.value }, false)
+        })
+      ]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Лимит символов"]),
+        el("input", {
+          class: "input",
+          disabled: editable ? null : "disabled",
+          type: "number",
+          min: "1",
+          value: question.max || "",
+          placeholder: "Для текстовых ответов",
+          oninput: event => updateQuestionnaireDraft(index, { max: event.target.value }, false)
+        })
+      ]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Максимум вариантов"]),
+        el("input", {
+          class: "input",
+          disabled: editable ? null : "disabled",
+          type: "number",
+          min: "1",
+          value: question.maxPick || "",
+          placeholder: "Для множественного выбора",
+          oninput: event => updateQuestionnaireDraft(index, { maxPick: event.target.value }, false)
+        })
+      ]),
+      el("label", { class: "inline-check question-required" }, [
+        el("input", {
+          type: "checkbox",
+          disabled: editable ? null : "disabled",
+          checked: question.required ? "checked" : null,
+          onchange: event => updateQuestionnaireDraft(index, { required: event.target.checked })
+        }),
+        el("span", {}, ["Обязательный вопрос"])
+      ])
+    ]),
+    needsChoices && !hasChoices ? el("p", { class: "question-editor-warning" }, [
+      "У этого закрытого вопроса пока нет вариантов ответа. Новые закрытые вопросы нужно дополнять вариантами и баллами в методологии."
+    ]) : el("div")
+  ]);
+}
+
+function questionnaireEditorPanel() {
+  if (!state.config) {
+    return el("section", { class: "table-panel questionnaire-editor-panel" }, [
+      el("div", { class: "panel-head" }, [
+        el("div", {}, [
+          el("h2", {}, ["Опросник вакансии"]),
+          el("span", {}, ["Загружаем вопросы для выбранной вакансии."])
+        ])
+      ])
+    ]);
+  }
+  const editable = canEditQuestionnaire();
+  const draft = ensureQuestionnaireDraft();
+  return el("section", { class: "table-panel questionnaire-editor-panel" }, [
+    el("div", { class: "panel-head questionnaire-editor-headline" }, [
+      el("div", {}, [
+        el("h2", {}, ["Опросник вакансии"]),
+        el("span", {}, ["Все вопросы на одной странице: можно быстро проверить текст, порядок, обязательность и лимиты."])
+      ]),
+      el("div", { class: "questionnaire-editor-top-actions" }, [
+        el("button", {
+          class: "btn ghost",
+          type: "button",
+          disabled: !editable ? "disabled" : null,
+          onclick: addQuestionnaireQuestion
+        }, [iconEl("plus"), "Добавить вопрос"]),
+        el("button", {
+          class: "btn primary",
+          type: "button",
+          disabled: !editable || state.questionnaireSaving ? "disabled" : null,
+          onclick: saveQuestionnaireDraft
+        }, [state.questionnaireSaving ? "Сохраняем..." : "Сохранить опросник"])
+      ])
+    ]),
+    editable ? el("p", { class: "questionnaire-editor-note" }, [
+      "Безопасный режим: редактируются вопросы и порядок. Варианты ответов и баллы закрытых вопросов остаются в методологии оценки, чтобы случайно не сломать скоринг."
+    ]) : el("p", { class: "questionnaire-editor-note" }, [
+      "У вас режим просмотра. Менять опросник может владелец или HR."
+    ]),
+    el("div", { class: "question-editor-list" }, draft.map((question, index) => questionEditorCard(question, index, draft.length, editable)))
   ]);
 }
 
@@ -2715,6 +3035,7 @@ function auditActionLabel(action) {
     "test_assignment.manual_review": "Оценка руководителя",
     "analytics.ai_insights": "Анализ потока нейросетью",
     "vacancy.create": "Создание вакансии",
+    "questionnaire.questions.update": "Изменение опросника вакансии",
     "config.update": "Изменение методологии"
   };
   return labels[action] || action;
@@ -2947,6 +3268,9 @@ async function saveVacancyWizardDraft() {
   const data = await response.json();
   resetVacancyWizard();
   state.adminVacancyCode = data.vacancyCode;
+  state.config = null;
+  state.questionnaireDraft = null;
+  state.questionnaireDraftVacancyCode = "";
   state.openingForm.vacancyCode = data.vacancyCode;
   state.vacancyReviewPrompt = {
     vacancyCode: data.vacancyCode,
@@ -3701,6 +4025,7 @@ function adminView() {
         statusBar(analytics),
         vacancyMetricsDashboard(analytics),
         adminQuestionnaireLinksPanel(),
+        questionnaireEditorPanel(),
         candidatesPanel(currentVacancyTitle)
       ]),
       el("aside", { class: "dashboard-side" }, [

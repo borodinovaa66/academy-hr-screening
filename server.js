@@ -887,6 +887,68 @@ function cleanText(value, max = 12000) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+const QUESTION_TYPES = new Set([
+  "namePair",
+  "contactPair",
+  "resumeAttachment",
+  "text",
+  "textarea",
+  "radio",
+  "checkbox",
+  "questionRating",
+  "expectations"
+]);
+
+function normalizeQuestionnaireQuestions(value) {
+  if (!Array.isArray(value) || !value.length) {
+    const error = new Error("В опроснике должен быть хотя бы один вопрос.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const ids = new Set();
+  return value.map((question, index) => {
+    const id = cleanText(question?.id || `customQuestion${index + 1}`, 80).replace(/[^a-zA-Z0-9_-]/g, "");
+    const title = cleanText(question?.title, 800);
+    const type = cleanText(question?.type || "text", 40);
+    if (!id) {
+      const error = new Error(`У вопроса ${index + 1} нет технического кода.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (ids.has(id)) {
+      const error = new Error(`Повторяется технический код вопроса: ${id}.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    ids.add(id);
+    if (!title) {
+      const error = new Error(`У вопроса ${index + 1} нет текста.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!QUESTION_TYPES.has(type)) {
+      const error = new Error(`Неизвестный тип вопроса: ${type}.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    const next = {
+      id,
+      title,
+      type,
+      required: Boolean(question?.required)
+    };
+    const section = cleanText(question?.section, 160);
+    const placeholder = cleanText(question?.placeholder, 240);
+    const max = Number(question?.max);
+    const maxPick = Number(question?.maxPick);
+    if (section) next.section = section;
+    if (placeholder) next.placeholder = placeholder;
+    if (Number.isFinite(max) && max > 0) next.max = Math.min(Math.round(max), 5000);
+    if (Number.isFinite(maxPick) && maxPick > 0) next.maxPick = Math.min(Math.round(maxPick), 30);
+    return next;
+  });
+}
+
 function makeVacancyCode(title, existingCodes = []) {
   const dictionary = {
     "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y",
@@ -3022,6 +3084,45 @@ async function handleApi(req, res) {
     });
     insertAuditLog({ user: adminSession, action: "hh_publication.update", targetType: "hh_publication", targetId: publication.id, vacancyCode: publication.vacancyCode, payload: { hhVacancyId: publication.hhVacancyId, status: publication.status } });
     return sendJson(res, 200, { publication });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "vacancies" && parts[4] === "questions") {
+    const vacancyCode = decodeURIComponent(parts[3] || "");
+    if (!vacancyCode) return sendJson(res, 400, { error: "Не указана вакансия." });
+    if (!canWriteVacancy(adminSession, vacancyCode)) return sendJson(res, 403, { error: "Менять опросник может владелец или HR с доступом к этой вакансии." });
+    try {
+      const payload = await readBody(req);
+      const normalizedQuestions = normalizeQuestionnaireQuestions(payload.questions);
+      const config = getQuestionnaireConfig();
+      if (!config.vacancies?.[vacancyCode]) return sendJson(res, 404, { error: "Вакансия не найдена." });
+      const nextConfig = cloneJson(config);
+      nextConfig.vacancies = { ...(nextConfig.vacancies || {}) };
+      nextConfig.vacancies[vacancyCode] = {
+        ...nextConfig.vacancies[vacancyCode],
+        questions: normalizedQuestions,
+        version: Number(nextConfig.vacancies[vacancyCode].version || 1) + 1
+      };
+      if ((nextConfig.vacancyCode || "smm") === vacancyCode || nextConfig.activeVacancyCode === vacancyCode) {
+        nextConfig.questions = normalizedQuestions;
+      }
+      nextConfig.version = Number(nextConfig.version || 1) + 1;
+      const savedConfig = saveQuestionnaireConfig(nextConfig);
+      insertAuditLog({
+        user: adminSession,
+        action: "questionnaire.questions.update",
+        targetType: "vacancy",
+        targetId: vacancyCode,
+        vacancyCode,
+        payload: { questions: normalizedQuestions.length }
+      });
+      return sendJson(res, 200, {
+        config: savedConfig.vacancies?.[vacancyCode],
+        rootConfig: savedConfig,
+        vacancies: getVacancies(savedConfig)
+      });
+    } catch (error) {
+      return sendJson(res, error.statusCode || 400, { error: error.message || "Не удалось сохранить опросник." });
+    }
   }
 
   if (req.method === "PUT" && url.pathname === "/api/admin/config") {
