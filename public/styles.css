@@ -2574,6 +2574,67 @@ h3 {
   line-height: 1.25;
 }
 
+.funnel-metrics-card {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.funnel-metric-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 78px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.funnel-metric-line:last-child {
+  border-bottom: 0;
+}
+
+.funnel-metric-line strong {
+  display: block;
+  color: var(--ink);
+  font-size: clamp(18px, 1.7vw, 24px);
+  font-weight: 950;
+  line-height: 1.1;
+}
+
+.funnel-metric-line span {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.funnel-metric-values {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.funnel-metric-values b {
+  color: var(--ink);
+  font-size: clamp(30px, 3.2vw, 46px);
+  font-weight: 950;
+  line-height: 0.95;
+}
+
+.funnel-metric-values em {
+  color: var(--teal);
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .channel-dashboard-note {
   margin: 0;
   color: var(--muted);
@@ -4132,6 +4193,15 @@ h3 {
   .telegram-draft-grid,
   .channel-metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .funnel-metric-line {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .funnel-metric-values {
+    justify-content: flex-start;
   }
 
   .channel-option,

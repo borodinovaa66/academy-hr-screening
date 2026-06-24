@@ -1677,6 +1677,16 @@ function sumKnown(values) {
   return hasKnown ? sum : null;
 }
 
+function isTodayDate(value) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const today = new Date();
+  return date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate();
+}
+
 function vacancyChannelMetrics(analytics) {
   const publications = selectedVacancyHhPublications();
   const responses = selectedVacancyHhResponses();
@@ -1684,15 +1694,21 @@ function vacancyChannelMetrics(analytics) {
   const hhResponsesFromMetrics = sumKnown(publications.map(item => item.payload?.hhMetrics?.responses));
   const hhResponses = Math.max(responses.length, hhResponsesFromMetrics || 0);
   const sentQuestionnaires = responses.filter(item => item.questionnaireSent).length;
+  const hhResponsesToday = responses.filter(item => isTodayDate(item.createdAt || item.updatedAt)).length;
+  const sentQuestionnairesToday = responses.filter(item => item.questionnaireSent && isTodayDate(item.questionnaireSentAt)).length;
+  const completedToday = (state.submissions || []).filter(item => isTodayDate(item.submittedAt)).length;
   const funnel = analytics.funnel || {};
   return {
     publications,
     hhViews,
     hhResponses,
+    hhResponsesToday,
     sentQuestionnaires,
+    sentQuestionnairesToday,
     landingViews: funnel.visitors || 0,
     started: funnel.started || 0,
     completed: analytics.total || 0,
+    completedToday,
     hhViewToResponse: hhViews ? pctText(hhResponses, hhViews) : "—",
     responseToQuestionnaire: hhResponses ? pctText(sentQuestionnaires, hhResponses) : "—",
     visitToComplete: funnel.visitToComplete !== undefined ? `${funnel.visitToComplete}%` : pctText(analytics.total || 0, funnel.visitors || 0),
@@ -1704,11 +1720,16 @@ function vacancyChannelMetrics(analytics) {
   };
 }
 
-function channelMetricCard(label, value, note = "") {
-  return el("div", { class: "channel-metric-card" }, [
-    el("span", {}, [label]),
-    el("strong", {}, [metricValue(value)]),
-    note ? el("em", {}, [note]) : el("em")
+function funnelMetricLine(label, total, today, note = "") {
+  return el("div", { class: "funnel-metric-line" }, [
+    el("div", {}, [
+      el("strong", {}, [label]),
+      note ? el("span", {}, [note]) : el("span")
+    ]),
+    el("div", { class: "funnel-metric-values" }, [
+      el("b", {}, [metricValue(total)]),
+      el("em", {}, [`сегодня: ${metricValue(today)}`])
+    ])
   ]);
 }
 
@@ -1720,7 +1741,7 @@ function vacancyMetricsDashboard(analytics) {
     el("div", { class: "panel-head" }, [
       el("div", {}, [
         el("h2", {}, ["Метрики воронки"]),
-        el("span", {}, ["Короткий срез по HeadHunter и переходам на наш опросник."])
+        el("span", {}, ["Всего за время работы воронки и отдельно за сегодня."])
       ]),
       hasHhPublication ? el("button", {
         class: "btn ghost",
@@ -1729,19 +1750,16 @@ function vacancyMetricsDashboard(analytics) {
           if (!publication) return;
           await saveAndSyncHhResponses(publication);
         }
-      }, ["Синхронизировать HH"]) : el("span", { class: "muted" }, ["HH-вакансия еще не привязана"])
+      }, ["Синхронизировать hh.ru"]) : el("span", { class: "muted" }, ["Вакансия hh.ru еще не привязана"])
     ]),
-    el("div", { class: "channel-metrics-grid" }, [
-      channelMetricCard("Просмотры HH", metrics.hhViews, metrics.hhViews === null ? "HH пока не отдал счетчик" : "карточка вакансии"),
-      channelMetricCard("Отклики HH", metrics.hhResponses, "синхронизированные отклики"),
-      channelMetricCard("Приглашений отправлено", metrics.sentQuestionnaires, "ссылка на анкету отправлена"),
-      channelMetricCard("Переходы на опросник", metrics.landingViews, "уникальные сессии"),
-      channelMetricCard("Начали анкету", metrics.started, "нажали старт"),
-      channelMetricCard("Заполнили анкету", metrics.completed, `${metrics.visitToComplete} от переходов`)
+    el("div", { class: "funnel-metrics-card" }, [
+      funnelMetricLine("Отклики hh.ru", metrics.hhResponses, metrics.hhResponsesToday, "кандидаты, откликнувшиеся на вакансию"),
+      funnelMetricLine("Приглашения с анкетой", metrics.sentQuestionnaires, metrics.sentQuestionnairesToday, "кандидатам отправлена ссылка на опросник"),
+      funnelMetricLine("Заполненные анкеты", metrics.completed, metrics.completedToday, `${metrics.visitToComplete} от переходов на опросник`)
     ]),
     el("p", { class: "channel-dashboard-note" }, [
-      `Последняя синхронизация HH: ${lastSync}. `,
-      "Просмотры доступны только если HeadHunter отдает их через API для подключенного работодателя; отклики и анкеты считаются платформой."
+      `Последняя синхронизация hh.ru: ${lastSync}. `,
+      "Просмотры доступны только если hh.ru отдает их через подключение работодателя; отклики и анкеты считаются платформой."
     ])
   ]);
 }
