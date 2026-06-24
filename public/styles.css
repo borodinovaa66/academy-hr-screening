@@ -1954,6 +1954,11 @@ h3 {
   margin: 0;
 }
 
+.login-field.has-error .input {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(187, 62, 62, 0.12);
+}
+
 .password-field {
   position: relative;
 }
@@ -1981,6 +1986,23 @@ h3 {
 
 .password-toggle:hover {
   border-color: var(--teal);
+}
+
+.password-field.has-error .password-toggle {
+  border-color: rgba(187, 62, 62, 0.42);
+}
+
+.login-error {
+  min-height: 22px;
+  margin: 10px 0 14px;
+  color: var(--red);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.login-error.empty {
+  visibility: hidden;
 }
 
 .topbar {

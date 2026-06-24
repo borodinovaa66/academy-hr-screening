@@ -260,6 +260,7 @@ const state = {
   loginUsername: localStorage.getItem(ADMIN_USER_KEY) || "",
   loginPassword: "",
   loginPasswordVisible: false,
+  loginError: "",
   hiringRequests: [],
   vacancyOpenings: [],
   hhTexts: [],
@@ -1279,23 +1280,27 @@ async function submitLogin(event = null) {
   const username = String(formData?.get("username") || state.loginUsername || "").trim();
   const password = String(formData?.get("password") || state.loginPassword || "");
   if (!username || !password) {
-    showToast("Введите логин и пароль.");
+    state.loginError = "Введите логин и пароль.";
+    render();
     return;
   }
   state.loginUsername = username;
   state.loginPassword = password;
+  state.loginError = "";
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
-    showToast("Неверный логин или пароль.");
+    state.loginError = response.status === 401 ? "Неверный логин или пароль." : "Не удалось войти. Попробуйте еще раз.";
+    render();
     return;
   }
   const data = await response.json();
   state.user = data.user;
   state.loginPassword = "";
+  state.loginError = "";
   localStorage.setItem(ADMIN_USER_KEY, data.user.username);
   await loadAdmin();
   render();
@@ -1314,7 +1319,7 @@ function loginView() {
       el("div", { class: "badge" }, [iconEl("user"), "Вход для команды"]),
       el("h1", {}, ["HR-платформа"]),
       el("p", {}, ["Войдите под выданным логином: владелец, HR или руководитель-заказчик вакансии. Доступ и разделы определяются вашей ролью."]),
-      el("label", { class: "named-input login-field" }, [
+      el("label", { class: `named-input login-field ${state.loginError ? "has-error" : ""}` }, [
         el("span", {}, ["Логин"]),
         el("input", {
           class: "input",
@@ -1323,12 +1328,19 @@ function loginView() {
           autocomplete: "username",
           value: state.loginUsername,
           placeholder: "Почта или логин",
-          oninput: event => { state.loginUsername = event.target.value; }
+          "aria-invalid": state.loginError ? "true" : "false",
+          oninput: event => {
+            state.loginUsername = event.target.value;
+            if (state.loginError) {
+              state.loginError = "";
+              render();
+            }
+          }
         })
       ]),
-      el("label", { class: "named-input login-field" }, [
+      el("label", { class: `named-input login-field ${state.loginError ? "has-error" : ""}` }, [
         el("span", {}, ["Пароль"]),
-        el("div", { class: "password-field" }, [
+        el("div", { class: `password-field ${state.loginError ? "has-error" : ""}` }, [
           el("input", {
             class: "input",
             type: state.loginPasswordVisible ? "text" : "password",
@@ -1336,7 +1348,14 @@ function loginView() {
             autocomplete: "current-password",
             value: state.loginPassword,
             placeholder: "Пароль",
-            oninput: event => { state.loginPassword = event.target.value; }
+            "aria-invalid": state.loginError ? "true" : "false",
+            oninput: event => {
+              state.loginPassword = event.target.value;
+              if (state.loginError) {
+                state.loginError = "";
+                render();
+              }
+            }
           }),
           el("button", {
             class: "password-toggle",
@@ -1349,6 +1368,7 @@ function loginView() {
           }, [iconEl("eye")])
         ])
       ]),
+      state.loginError ? el("p", { class: "login-error", role: "alert" }, [state.loginError]) : el("p", { class: "login-error empty" }, [""]),
       el("button", { class: "btn primary wide", type: "submit" }, ["Войти", iconEl("arrow")])
     ])
   ]);
