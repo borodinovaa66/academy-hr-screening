@@ -1,0 +1,80 @@
+name: Задача от агента
+description: Единый шаблон задачи от маркетолога, продакт-менеджера, дизайнера или другого агента
+title: "[Агент] "
+labels: ["agent-task", "needs-dev"]
+body:
+  - type: dropdown
+    id: role
+    attributes:
+      label: Роль агента
+      options:
+        - Маркетолог
+        - Продакт-менеджер
+        - Дизайнер интерфейса
+        - Разработчик
+        - Другой агент
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Бизнес-цель
+      description: Какую бизнес-задачу решает изменение
+      placeholder: Например, повысить доходимость кандидатов до анкеты или упростить запуск новой вакансии.
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Пользовательский сценарий
+      description: Кто, где и что должен сделать
+      placeholder: Руководитель открывает раздел, выбирает вакансию, проверяет описание и нажимает...
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: Что нужно сделать
+      description: Конкретные изменения в продукте
+    validations:
+      required: true
+  - type: input
+    id: area
+    attributes:
+      label: Где менять
+      placeholder: Например, админка / кандидатская анкета / HeadHunter / уведомления / лендинг
+    validations:
+      required: true
+  - type: textarea
+    id: texts
+    attributes:
+      label: Готовые тексты
+      description: Если в задаче есть тексты интерфейса, писем или страниц, вставить сюда
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии приемки
+      description: По каким признакам понятно, что задача выполнена
+      placeholder: "- отображается на мобильном и рабочем экране\n- нет английских служебных слов\n- данные сохраняются в базу"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Приоритет
+      options:
+        - Высокий
+        - Средний
+        - Низкий
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Риски и ограничения
+      description: Что важно не сломать, чего нельзя делать
+    validations:
+      required: false
+
