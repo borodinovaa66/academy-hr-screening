@@ -300,6 +300,17 @@ const state = {
     headcount: 1,
     recruitmentChannels: ["hh"]
   },
+  vacancyWizard: {
+    active: false,
+    step: "input",
+    sourceText: "",
+    questions: [],
+    answers: {},
+    questionIndex: 0,
+    draft: null,
+    loading: false,
+    listening: false
+  },
   staffForm: {
     email: "",
     displayName: "",
@@ -387,6 +398,10 @@ function isHrOrOwner() {
   return state.user?.role === "owner" || state.user?.role === "hr";
 }
 
+function canStartRecruitment() {
+  return isHrOrOwner() || state.user?.role === "hiring_manager";
+}
+
 function roleLabel(role) {
   if (role === "owner") return "Владелец";
   if (role === "hr") return "HR";
@@ -464,7 +479,9 @@ function icon(name) {
     eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
     trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
     bell: '<path d="M10 21h4"/><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>',
-    copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'
+    copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+    plus: '<path d="M12 5v14"/><path d="M5 12h14"/>'
   };
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths[name] || paths.check}</svg>`;
 }
@@ -2696,6 +2713,7 @@ function auditActionLabel(action) {
     "test_assignment.evaluate": "Оценка тестового",
     "test_assignment.manual_review": "Оценка руководителя",
     "analytics.ai_insights": "Анализ потока нейросетью",
+    "vacancy.create": "Создание вакансии",
     "config.update": "Изменение методологии"
   };
   return labels[action] || action;
@@ -2779,6 +2797,158 @@ async function createOpeningFromAdmin() {
   state.openingForm = { vacancyCode: "", reason: "", urgency: "normal", desiredStartDate: "", headcount: 1, recruitmentChannels: ["hh"] };
   await loadAdmin();
   showToast("Запуск подбора создан.");
+  render();
+}
+
+function resetVacancyWizard() {
+  state.vacancyWizard = {
+    active: false,
+    step: "input",
+    sourceText: "",
+    questions: [],
+    answers: {},
+    questionIndex: 0,
+    draft: null,
+    loading: false,
+    listening: false
+  };
+}
+
+function openVacancyWizard() {
+  state.vacancyWizard.active = true;
+  state.vacancyWizard.step = "input";
+  render();
+}
+
+function closeVacancyWizard() {
+  resetVacancyWizard();
+  render();
+}
+
+function combinedVacancyBrief() {
+  const wizard = state.vacancyWizard;
+  const answerText = (wizard.questions || [])
+    .map((question, index) => {
+      const answer = wizard.answers[index];
+      return answer ? `${question}\n${answer}` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+  return [wizard.sourceText, answerText].filter(Boolean).join("\n\n");
+}
+
+async function analyzeVacancyWizard(forceDraft = false) {
+  const wizard = state.vacancyWizard;
+  const text = combinedVacancyBrief().trim();
+  if (text.length < 20) return showToast("Опишите роль хотя бы несколькими предложениями.");
+  wizard.loading = true;
+  render();
+  const response = await fetch("/api/admin/vacancy-draft", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sourceText: text,
+      forceDraft,
+      answers: wizard.answers
+    })
+  });
+  wizard.loading = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось подготовить вакансию." }));
+    showToast(error.error || "Не удалось подготовить вакансию.");
+    render();
+    return;
+  }
+  const data = await response.json();
+  if (!data.complete && data.questions?.length) {
+    wizard.questions = data.questions;
+    wizard.questionIndex = 0;
+    wizard.step = "questions";
+    showToast("Нужно уточнить несколько вводных по роли.");
+  } else {
+    wizard.draft = data.draft;
+    wizard.step = "draft";
+    showToast(data.mode === "local" ? "Черновик вакансии подготовлен локально." : "Нейросеть подготовила черновик вакансии.");
+  }
+  render();
+}
+
+function setVacancyWizardAnswer(value) {
+  state.vacancyWizard.answers[state.vacancyWizard.questionIndex] = value;
+}
+
+function nextVacancyWizardQuestion() {
+  const wizard = state.vacancyWizard;
+  const answer = String(wizard.answers[wizard.questionIndex] || "").trim();
+  if (answer.length < 3) return showToast("Ответьте на текущий вопрос.");
+  if (wizard.questionIndex < wizard.questions.length - 1) {
+    wizard.questionIndex += 1;
+    render();
+    return;
+  }
+  analyzeVacancyWizard(true);
+}
+
+function previousVacancyWizardQuestion() {
+  const wizard = state.vacancyWizard;
+  if (wizard.questionIndex > 0) {
+    wizard.questionIndex -= 1;
+    render();
+  } else {
+    wizard.step = "input";
+    render();
+  }
+}
+
+function startVacancyDictation() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return showToast("Диктовка в этом браузере недоступна. Можно ввести текст вручную.");
+  const recognition = new SpeechRecognition();
+  recognition.lang = "ru-RU";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  state.vacancyWizard.listening = true;
+  render();
+  recognition.onresult = event => {
+    const text = Array.from(event.results || [])
+      .map(result => result[0]?.transcript || "")
+      .join(" ")
+      .trim();
+    if (text) {
+      state.vacancyWizard.sourceText = [state.vacancyWizard.sourceText, text].filter(Boolean).join(" ");
+    }
+  };
+  recognition.onerror = () => showToast("Не удалось распознать речь. Попробуйте еще раз или введите текст.");
+  recognition.onend = () => {
+    state.vacancyWizard.listening = false;
+    render();
+  };
+  recognition.start();
+}
+
+async function saveVacancyWizardDraft() {
+  const draft = state.vacancyWizard.draft;
+  if (!draft) return showToast("Сначала подготовьте черновик вакансии.");
+  state.vacancyWizard.loading = true;
+  render();
+  const response = await fetch("/api/admin/vacancies", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ draft })
+  });
+  state.vacancyWizard.loading = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить вакансию." }));
+    showToast(error.error || "Не удалось сохранить вакансию.");
+    render();
+    return;
+  }
+  const data = await response.json();
+  resetVacancyWizard();
+  state.adminVacancyCode = data.vacancyCode;
+  state.openingForm.vacancyCode = data.vacancyCode;
+  await loadAdmin();
+  showToast("Вакансия добавлена в справочник. Теперь можно начинать подбор.");
   render();
 }
 
@@ -2931,8 +3101,104 @@ function hiringStatusLabel(status) {
   return labels[status] || status || "—";
 }
 
+function vacancyWizardPanel() {
+  const wizard = state.vacancyWizard;
+  if (!wizard.active) {
+    return el("section", { class: "table-panel vacancy-builder-intro" }, [
+      el("div", { class: "panel-head" }, [
+        el("div", {}, [
+          el("h2", {}, ["Создать новую вакансию"]),
+          el("span", {}, ["Если нужной позиции нет в справочнике, опишите ее текстом или голосом. Система подготовит профиль роли, обязанности, текст для hh.ru и основу анкеты."])
+        ]),
+        el("button", { class: "btn primary", onclick: openVacancyWizard }, [iconEl("plus"), "Создать вакансию"])
+      ])
+    ]);
+  }
+
+  if (wizard.step === "questions") {
+    const question = wizard.questions[wizard.questionIndex] || "";
+    return el("section", { class: "table-panel vacancy-builder" }, [
+      el("div", { class: "panel-head" }, [
+        el("div", {}, [
+          el("h2", {}, ["Уточняем вводные"]),
+          el("span", {}, [`Вопрос ${wizard.questionIndex + 1} из ${wizard.questions.length}. Это нужно, чтобы не придумывать за руководителя важные детали.`])
+        ]),
+        el("button", { class: "btn ghost", onclick: closeVacancyWizard }, ["Отменить"])
+      ]),
+      el("div", { class: "vacancy-builder-question" }, [
+        el("strong", {}, [question]),
+        el("textarea", {
+          class: "textarea vacancy-builder-textarea",
+          value: wizard.answers[wizard.questionIndex] || "",
+          placeholder: "Ответьте коротко и по сути.",
+          oninput: event => setVacancyWizardAnswer(event.target.value)
+        })
+      ]),
+      el("div", { class: "form-actions vacancy-builder-actions" }, [
+        el("button", { class: "btn ghost", onclick: previousVacancyWizardQuestion }, ["Назад"]),
+        el("button", { class: "btn primary", onclick: nextVacancyWizardQuestion, disabled: wizard.loading ? "disabled" : null }, [wizard.loading ? "Готовим..." : wizard.questionIndex === wizard.questions.length - 1 ? "Собрать вакансию" : "Дальше", iconEl("arrow")])
+      ])
+    ]);
+  }
+
+  if (wizard.step === "draft" && wizard.draft) {
+    const draft = wizard.draft;
+    return el("section", { class: "table-panel vacancy-builder" }, [
+      el("div", { class: "panel-head" }, [
+        el("div", {}, [
+          el("h2", {}, ["Черновик вакансии"]),
+          el("span", {}, ["Проверьте смысл. После сохранения вакансия появится в справочнике и ее можно будет выбрать для запуска подбора."])
+        ]),
+        el("button", { class: "btn ghost", onclick: closeVacancyWizard }, ["Отменить"])
+      ]),
+      el("div", { class: "vacancy-draft-grid" }, [
+        el("div", { class: "vacancy-draft-block" }, [
+          el("span", {}, ["Название"]),
+          el("strong", {}, [draft.title || "Новая вакансия"])
+        ]),
+        el("div", { class: "vacancy-draft-block" }, [
+          el("span", {}, ["Профиль роли"]),
+          el("p", {}, [draft.roleProfile || "Профиль будет уточнен после сохранения."])
+        ]),
+        el("div", { class: "vacancy-draft-block" }, [
+          el("span", {}, ["Функциональные обязанности"]),
+          el("ul", {}, (draft.responsibilities || []).slice(0, 8).map(item => el("li", {}, [item])))
+        ]),
+        el("div", { class: "vacancy-draft-block" }, [
+          el("span", {}, ["Специальные вопросы анкеты"]),
+          el("ul", {}, (draft.specialQuestions || []).slice(0, 8).map(item => el("li", {}, [item])))
+        ])
+      ]),
+      el("div", { class: "vacancy-builder-actions" }, [
+        el("button", { class: "btn ghost", onclick: () => { wizard.step = "input"; render(); } }, ["Вернуться к описанию"]),
+        el("button", { class: "btn primary", onclick: saveVacancyWizardDraft, disabled: wizard.loading ? "disabled" : null }, [wizard.loading ? "Сохраняем..." : "Сохранить в справочник", iconEl("arrow")])
+      ])
+    ]);
+  }
+
+  return el("section", { class: "table-panel vacancy-builder" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Новая вакансия"]),
+        el("span", {}, ["Опишите роль свободно: зачем нужен человек, что он будет делать, какой результат ожидаете, какие навыки критичны, формат работы и доход."])
+      ]),
+      el("button", { class: "btn ghost", onclick: closeVacancyWizard }, ["Отменить"])
+    ]),
+    el("textarea", {
+      class: "textarea vacancy-builder-textarea",
+      value: wizard.sourceText,
+      placeholder: "Например: нужен менеджер запусков онлайн-школы, будет вести подготовку вебинаров, контролировать задачи подрядчиков, сроки, таблицы, воронку и отчетность...",
+      oninput: event => { wizard.sourceText = event.target.value; }
+    }),
+    el("div", { class: "vacancy-builder-actions" }, [
+      el("button", { class: `btn ghost ${wizard.listening ? "active" : ""}`, onclick: startVacancyDictation }, [iconEl("mic"), wizard.listening ? "Слушаю..." : "Надиктовать"]),
+      el("button", { class: "btn primary", onclick: () => analyzeVacancyWizard(false), disabled: wizard.loading ? "disabled" : null }, [wizard.loading ? "Проверяем..." : "Проверить и собрать", iconEl("arrow")])
+    ])
+  ]);
+}
+
 function hiringDashboardView() {
-  const canCreateOpening = isHrOrOwner();
+  const canCreateOpening = canStartRecruitment();
   return el("section", { class: "staff-page" }, [
     el("header", { class: "dash-header" }, [
       el("div", {}, [
@@ -2961,6 +3227,7 @@ function hiringDashboardView() {
       ]),
       el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
     ]),
+    canCreateOpening ? vacancyWizardPanel() : el("div"),
     canCreateOpening ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Начать подбор по готовой вакансии"]), el("span", {}, ["Создает рабочую воронку по выбранной позиции."])]),
       el("div", { class: "staff-form-grid" }, [

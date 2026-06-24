@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const net = require("net");
 const tls = require("tls");
 const { scoreSubmission, buildFlowAnalytics } = require("./src/scoring");
+const { defaultConfig } = require("./src/defaultConfig");
 const {
   initDb,
   getConfig,
@@ -876,6 +877,301 @@ function buildTelegramDrafts(vacancyCode, opening = null) {
     "Будем рады познакомиться."
   ].join("\n");
   return { chatPost, directMessage };
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value || {}));
+}
+
+function cleanText(value, max = 12000) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function makeVacancyCode(title, existingCodes = []) {
+  const dictionary = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"
+  };
+  const base = String(title || "vacancy")
+    .toLowerCase()
+    .split("")
+    .map(char => dictionary[char] ?? char)
+    .join("")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 42) || "vacancy";
+  let code = base;
+  let index = 2;
+  while (existingCodes.includes(code)) {
+    code = `${base}-${index}`;
+    index += 1;
+  }
+  return code;
+}
+
+function vacancyBriefGaps(text) {
+  const lower = String(text || "").toLowerCase();
+  const checks = [
+    {
+      ok: /(нужен|нужна|ищем|ваканси|роль|должност|позици|менеджер|специалист|руководител)/i.test(lower),
+      question: "Как точно называется роль и зачем сейчас открываем эту позицию?"
+    },
+    {
+      ok: /(делать|задач|обязан|функц|вести|отвеч|контрол|созда|настраив|анализ)/i.test(lower),
+      question: "Какие 5-7 ключевых задач будут в зоне ответственности человека?"
+    },
+    {
+      ok: /(результ|показател|цель|kpi|метрик|итог|успех|заяв|выруч|срок)/i.test(lower),
+      question: "Какой результат через 1-3 месяца покажет, что человек подходит?"
+    },
+    {
+      ok: /(опыт|навык|умени|инструмент|сервис|таблиц|crm|дизайн|аналит|продаж|проект)/i.test(lower),
+      question: "Какой опыт, навыки и инструменты обязательны, а что можно добрать в работе?"
+    },
+    {
+      ok: /(удален|офис|гибрид|график|полный день|частич|зарплат|доход|вилка|руб|оклад)/i.test(lower),
+      question: "Какой формат работы, график и примерная вилка дохода предполагаются?"
+    }
+  ];
+  return checks.filter(item => !item.ok).map(item => item.question);
+}
+
+function guessVacancyTitle(text) {
+  const source = cleanText(text, 800);
+  const patterns = [
+    /(?:нужен|нужна|ищем|требуется)\s+([^,.!?]{4,80})/i,
+    /(?:роль|позиция|вакансия)\s+([^,.!?]{4,80})/i
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1]) {
+      return match[1]
+        .replace(/^(на|для)\s+/i, "")
+        .replace(/\s+(который|которая|чтобы|для).*$/i, "")
+        .trim();
+    }
+  }
+  return "Новая роль";
+}
+
+function sentenceItems(text, fallback = []) {
+  const cleaned = String(text || "")
+    .split(/[.;\n]/)
+    .map(item => item.trim())
+    .filter(item => item.length > 8 && item.length < 180);
+  return [...new Set(cleaned)].slice(0, 8).length ? [...new Set(cleaned)].slice(0, 8) : fallback;
+}
+
+function localVacancyDraft(sourceText) {
+  const title = guessVacancyTitle(sourceText);
+  const responsibilities = sentenceItems(sourceText, [
+    "вести ключевые задачи роли от постановки до результата",
+    "поддерживать регулярную коммуникацию с руководителем и командой",
+    "фиксировать договоренности, сроки, риски и статус выполнения",
+    "работать с рабочими инструментами компании и отчетностью",
+    "предлагать улучшения процесса на основе фактов и обратной связи"
+  ]);
+  const specialQuestions = [
+    `Опишите самый близкий к роли "${title}" опыт: задача, ваша зона ответственности и результат.`,
+    "С какой самой сложной рабочей ситуацией в этой роли вы сталкивались и как ее решили?",
+    "Какие инструменты вы используете, чтобы держать задачи, сроки и результат под контролем?",
+    "Что вы сделаете в первые две недели, чтобы быстро войти в роль?"
+  ];
+  return {
+    mode: "local",
+    title,
+    adminTitle: title.length > 22 ? title.slice(0, 21).trim() : title,
+    roleProfile: `Самостоятельный специалист на роль "${title}", который умеет брать зону ответственности, ясно коммуницировать, доводить задачи до результата и работать с показателями.`,
+    responsibilities,
+    requiredExperience: [
+      "релевантный опыт в похожих задачах",
+      "умение работать самостоятельно и показывать статус",
+      "готовность работать с цифрами, сроками и обратной связью"
+    ],
+    hhText: "",
+    specialQuestions,
+    testAssignment: `Подготовьте короткий документ: как вы разберете текущую задачу роли "${title}", какие первые шаги предложите, какие риски увидите и как будете измерять результат.`
+  };
+}
+
+function vacancyDraftPrompt(sourceText) {
+  return [
+    "Ты помогаешь HR-платформе Бизнес-школы \"Академия менеджмента\" собрать новую вакансию.",
+    "Нельзя придумывать критичные факты, которых нет во вводных. Если данных достаточно, аккуратно обобщи их.",
+    "Пиши только по-русски. Не используй английские служебные слова и англицизмы.",
+    "Верни строго JSON без Markdown в формате:",
+    "{title:string,adminTitle:string,roleProfile:string,responsibilities:string[],requiredExperience:string[],specialQuestions:string[],testAssignment:string,hhText:string}.",
+    "specialQuestions - 3-6 специфических вопросов для анкеты именно под эту вакансию.",
+    "hhText - готовый текст вакансии для hh.ru с разделами: кто мы, зачем роль, задачи, кому подойдет, условия, как проходит отбор.",
+    "",
+    "Вводные руководителя:",
+    sourceText
+  ].join("\n");
+}
+
+async function callVacancyDraftAi(sourceText) {
+  if (AI_PROVIDER === "yandex" && YANDEX_GPT_API_KEY && YANDEX_FOLDER_ID) {
+    const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+      method: "POST",
+      headers: {
+        "Authorization": `Api-Key ${YANDEX_GPT_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        modelUri: `gpt://${YANDEX_FOLDER_ID}/${YANDEX_GPT_MODEL}/latest`,
+        completionOptions: { stream: false, temperature: 0.2, maxTokens: 1800 },
+        messages: [
+          { role: "system", text: "Верни только валидный JSON. Пиши по-русски, без Markdown." },
+          { role: "user", text: vacancyDraftPrompt(sourceText) }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return { mode: "yandex", ...parseAiJson(data.result?.alternatives?.[0]?.message?.text || "{}") };
+  }
+
+  if (OPENAI_API_KEY) {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: "Верни только валидный JSON. Пиши по-русски, без Markdown." },
+          { role: "user", content: vacancyDraftPrompt(sourceText) }
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" }
+      })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return { mode: "ai", ...parseAiJson(data.choices?.[0]?.message?.content || "{}") };
+  }
+
+  throw new Error("ключ нейросети не настроен");
+}
+
+function normalizeVacancyDraft(draft, sourceText) {
+  const local = localVacancyDraft(sourceText);
+  const title = cleanText(draft?.title || local.title, 120) || local.title;
+  const normalized = {
+    mode: draft?.mode || "local",
+    title,
+    adminTitle: cleanText(draft?.adminTitle || title, 40) || title,
+    roleProfile: cleanText(draft?.roleProfile || local.roleProfile, 1000),
+    responsibilities: Array.isArray(draft?.responsibilities) && draft.responsibilities.length ? draft.responsibilities.map(item => cleanText(item, 220)).filter(Boolean).slice(0, 10) : local.responsibilities,
+    requiredExperience: Array.isArray(draft?.requiredExperience) && draft.requiredExperience.length ? draft.requiredExperience.map(item => cleanText(item, 220)).filter(Boolean).slice(0, 8) : local.requiredExperience,
+    specialQuestions: Array.isArray(draft?.specialQuestions) && draft.specialQuestions.length ? draft.specialQuestions.map(item => cleanText(item, 240)).filter(Boolean).slice(0, 8) : local.specialQuestions,
+    testAssignment: cleanText(draft?.testAssignment || local.testAssignment, 1200),
+    hhText: String(draft?.hhText || "").trim(),
+    sourceText: cleanText(draft?.sourceText || sourceText, 6000)
+  };
+  if (!normalized.hhText) {
+    normalized.hhText = [
+      `# ${normalized.title}`,
+      "",
+      "Бизнес-школа \"Академия менеджмента\" усиливает команду и открывает новую роль.",
+      "",
+      "## Профиль роли",
+      normalized.roleProfile,
+      "",
+      "## Что предстоит делать",
+      ...normalized.responsibilities.map(item => `- ${item}`),
+      "",
+      "## Что важно",
+      ...normalized.requiredExperience.map(item => `- ${item}`),
+      "",
+      "Первый шаг отбора - короткая анкета на нашей платформе. Она помогает быстро понять ваш опыт и не тратить время на неподходящие этапы."
+    ].join("\n");
+  }
+  return normalized;
+}
+
+function buildGeneratedVacancyConfig(vacancyCode, draft, sourceText) {
+  const base = cloneJson(defaultConfig.vacancies?.["project-manager"] || defaultConfig);
+  const title = draft.title || "Новая роль";
+  const generatedQuestionIds = (draft.specialQuestions || []).slice(0, 4).map((question, index) => ({
+    section: index === 0 ? "Специфика роли" : undefined,
+    id: `roleSpecific${index + 1}`,
+    title: question,
+    type: "textarea",
+    max: 800,
+    required: true
+  }));
+  const baseQuestions = (base.questions || []).filter(question => !["projectCase", "deadlineRiskCase", "funnelCheck", "questionnaireFeedbackRating"].includes(question.id));
+  const scoring = cloneJson(base.scoring || {});
+  scoring.blocks = {
+    ...(scoring.blocks || {}),
+    practicalCases: generatedQuestionIds.map(question => ({
+      field: question.id,
+      type: "text",
+      keywords: ["результ", "срок", "задач", "ответствен", "риск", "команд", "инструмент", "показател", "решен"],
+      max: 10
+    }))
+  };
+  return {
+    ...base,
+    version: 1,
+    vacancyCode,
+    publicTitle: title,
+    adminTitle: draft.adminTitle || title,
+    title: `Анкета: ${title}`,
+    intro: "7-10 минут. Цель - быстро понять релевантность опыта, самостоятельность, рабочее поведение и соответствие роли.",
+    questions: [
+      ...baseQuestions,
+      ...generatedQuestionIds,
+      { section: "Финальная оценка", id: "questionnaireFeedbackRating", title: "Это был последний вопрос. Насколько вопросы показались вам понятными и уместными?", type: "questionRating", required: true }
+    ],
+    scoring,
+    testAssignment: {
+      ...(base.testAssignment || {}),
+      enabled: true,
+      threshold: Number(base.testAssignment?.threshold || 70),
+      enabledStatuses: ["green", "yellow"],
+      title: `Практическое задание: ${title}`,
+      submitFormat: "Google Документ с открытым доступом по ссылке",
+      instruction: [
+        draft.testAssignment,
+        "Оформите результат в Google Документе.",
+        "Откройте доступ по ссылке и прикрепите ссылку на странице задания."
+      ].filter(Boolean),
+      evaluationCriteria: [
+        { id: "understanding", title: "Понимание роли и задачи", max: 20, description: "Кандидат правильно понял контекст и цель работы." },
+        { id: "logic", title: "Логика решения", max: 20, description: "Есть последовательность действий, приоритеты и связь с результатом." },
+        { id: "specificity", title: "Конкретика", max: 20, description: "Предложения применимы, не сводятся к общим словам." },
+        { id: "risks", title: "Работа с рисками", max: 15, description: "Кандидат видит ограничения, слабые места и варианты действий." },
+        { id: "metrics", title: "Показатели результата", max: 15, description: "Понимает, как измерить успешность работы." },
+        { id: "clarity", title: "Ясность подачи", max: 10, description: "Документ легко читать и использовать." }
+      ]
+    },
+    ui: {
+      ...(base.ui || {}),
+      welcomeLabel: title,
+      welcomeLead: `Мы рады, что вы заинтересовались вакансией "${title}". Ответьте на несколько вопросов, чтобы мы быстрее поняли ваш опыт и соответствие роли.`,
+      guideAlt: `Помощник анкеты: ${title}`,
+      testLead: "Спасибо за ответы. По итогам анкеты видно, что ваш опыт может быть близок к нашей роли, поэтому предлагаем следующий шаг - показать себя в деле.",
+      testSpeech: "Класс! Анкета выглядит сильной. Давайте посмотрим, как вы думаете на практике."
+    },
+    guideCaptions: {
+      ...(base.guideCaptions || {}),
+      ...Object.fromEntries(generatedQuestionIds.map(question => [question.id, "Здесь важен ваш реальный опыт и ход мыслей именно под эту роль."]))
+    },
+    vacancyArtifacts: {
+      generatedAt: new Date().toISOString(),
+      sourceText: cleanText(sourceText, 6000),
+      roleProfile: draft.roleProfile,
+      responsibilities: draft.responsibilities,
+      requiredExperience: draft.requiredExperience,
+      hhText: draft.hhText,
+      specialQuestions: draft.specialQuestions
+    }
+  };
 }
 
 function hhConfigured() {
@@ -2404,6 +2700,54 @@ async function handleApi(req, res) {
         vacancies: Object.fromEntries(Object.keys(visible).map(code => [code, config.vacancies?.[code]]).filter(([, value]) => Boolean(value)))
       };
     return sendJson(res, 200, { config: visibleConfig, vacancies: visible });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/vacancy-draft") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr" || adminSession.role === "hiring_manager")) {
+      return sendJson(res, 403, { error: "Создавать вакансию может владелец, HR или руководитель-заказчик." });
+    }
+    const payload = await readBody(req);
+    const sourceText = cleanText(payload.sourceText, 12000);
+    if (sourceText.length < 20) return sendJson(res, 400, { error: "Опишите вакансию подробнее." });
+    const questions = vacancyBriefGaps(sourceText).slice(0, 5);
+    if (!payload.forceDraft && questions.length) {
+      return sendJson(res, 200, { complete: false, questions });
+    }
+    let draft;
+    try {
+      draft = normalizeVacancyDraft(await callVacancyDraftAi(sourceText), sourceText);
+    } catch (error) {
+      draft = normalizeVacancyDraft({ ...localVacancyDraft(sourceText), mode: "local", aiError: error.message }, sourceText);
+    }
+    return sendJson(res, 200, { complete: true, mode: draft.mode || "local", draft });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/vacancies") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr" || adminSession.role === "hiring_manager")) {
+      return sendJson(res, 403, { error: "Сохранять вакансию может владелец, HR или руководитель-заказчик." });
+    }
+    const payload = await readBody(req);
+    const draft = normalizeVacancyDraft(payload.draft || {}, payload.draft?.sourceText || "");
+    const config = getQuestionnaireConfig();
+    const existingCodes = vacancyCodes(config);
+    const vacancyCode = makeVacancyCode(draft.title, existingCodes);
+    const nextConfig = cloneJson(config);
+    const rootVacancy = cloneJson(nextConfig);
+    delete rootVacancy.vacancies;
+    nextConfig.vacancies = nextConfig.vacancies ? { ...nextConfig.vacancies } : { [nextConfig.vacancyCode || "smm"]: rootVacancy };
+    nextConfig.vacancies[vacancyCode] = buildGeneratedVacancyConfig(vacancyCode, draft, payload.draft?.sourceText || "");
+    nextConfig.version = Number(nextConfig.version || 1) + 1;
+    const savedConfig = saveQuestionnaireConfig(nextConfig);
+    if (adminSession.role === "hiring_manager") {
+      const access = Array.isArray(adminSession.vacancyAccess) ? adminSession.vacancyAccess : [];
+      updateUser(adminSession.userId, { vacancyAccess: [...new Set([...access, vacancyCode])] });
+    }
+    insertAuditLog({ user: adminSession, action: "vacancy.create", targetType: "vacancy", targetId: vacancyCode, vacancyCode, payload: { title: draft.title } });
+    return sendJson(res, 201, {
+      vacancyCode,
+      vacancy: getVacancies(savedConfig)[vacancyCode],
+      config: savedConfig.vacancies?.[vacancyCode]
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/hiring-requests") {
