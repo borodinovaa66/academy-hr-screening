@@ -3074,7 +3074,8 @@ const OPENING_REASON_OPTIONS = [
 function openingReasonPicker(form) {
   const selectedPreset = OPENING_REASON_OPTIONS.includes(form.reason) && form.reasonMode !== "other" ? form.reason : "";
   const isOther = form.reasonMode === "other" || (form.reason && !OPENING_REASON_OPTIONS.includes(form.reason));
-  return el("div", { class: "reason-picker" }, [
+  return el("label", { class: "named-input reason-picker" }, [
+    el("span", {}, ["Причина открытия"]),
     el("select", {
       class: "input compact-input",
       value: isOther ? "__other__" : selectedPreset,
@@ -3096,13 +3097,94 @@ function openingReasonPicker(form) {
       }, [reason])),
       el("option", { value: "__other__", selected: isOther ? "selected" : null }, ["Другое"])
     ]),
+    el("small", { class: "field-hint" }, ["Выберите, почему нужно открыть подбор. Это поможет HR правильно оформить запуск."]),
     isOther ? el("input", {
       class: "input compact-input",
       placeholder: "Введите свою причину",
       value: form.reason || "",
       oninput: event => { form.reason = event.target.value; }
-    }) : el("div")
+    }) : el("div"),
+    isOther ? el("small", { class: "field-hint" }, ["Кратко опишите причину своими словами."]) : el("div")
   ]);
+}
+
+function adminField(label, hint, control) {
+  return el("label", { class: "named-input admin-form-field" }, [
+    el("span", {}, [label]),
+    control,
+    hint ? el("small", { class: "field-hint" }, [hint]) : el("small", { class: "field-hint" }, [""])
+  ]);
+}
+
+function adminInputField(label, hint, attrs) {
+  return adminField(label, hint, el("input", attrs));
+}
+
+function vacancySelectControl(value, onChange) {
+  return el("select", { class: "input compact-input", value, onchange: onChange }, [
+    el("option", { value: "" }, ["Выберите вакансию"]),
+    ...vacancyOptions(value)
+  ]);
+}
+
+function requestTypeControl() {
+  return el("select", {
+    class: "input compact-input",
+    value: state.hiringRequestForm.requestType,
+    onchange: event => {
+      state.hiringRequestForm.requestType = event.target.value;
+      render();
+    }
+  }, [
+    el("option", { value: "start_existing", selected: state.hiringRequestForm.requestType === "start_existing" ? "selected" : null }, ["Запустить готовую вакансию"]),
+    el("option", { value: "new_vacancy", selected: state.hiringRequestForm.requestType === "new_vacancy" ? "selected" : null }, ["Запросить новую вакансию"])
+  ]);
+}
+
+function hiringVacancyField() {
+  if (state.hiringRequestForm.requestType === "start_existing") {
+    return adminField(
+      "Готовая вакансия",
+      "Выберите позицию из справочника, если она уже заведена в системе.",
+      vacancySelectControl(state.hiringRequestForm.vacancyCode, event => {
+        state.hiringRequestForm.vacancyCode = event.target.value;
+      })
+    );
+  }
+  return adminInputField("Новая вакансия", "Напишите название позиции, которую нужно добавить в справочник.", {
+    class: "input compact-input",
+    placeholder: "Например: личный ассистент",
+    value: state.hiringRequestForm.title,
+    oninput: event => { state.hiringRequestForm.title = event.target.value; }
+  });
+}
+
+function desiredStartDateField(form) {
+  return adminInputField("Желаемая дата выхода", "Можно указать точную дату или ориентир: как можно скорее, в течение месяца.", {
+    class: "input compact-input",
+    placeholder: "Например: в течение месяца",
+    value: form.desiredStartDate,
+    oninput: event => { form.desiredStartDate = event.target.value; }
+  });
+}
+
+function commentField(form) {
+  return adminInputField("Комментарий", "Добавьте важные детали: ограничения, пожелания руководителя, особенности команды.", {
+    class: "input compact-input",
+    placeholder: "Необязательно",
+    value: form.comment || "",
+    oninput: event => { form.comment = event.target.value; }
+  });
+}
+
+function openingVacancyField() {
+  return adminField(
+    "Вакансия",
+    "Выберите готовую позицию, по которой нужно запустить рабочую воронку.",
+    vacancySelectControl(state.openingForm.vacancyCode, event => {
+      state.openingForm.vacancyCode = event.target.value;
+    })
+  );
 }
 
 function toggleRecruitmentChannel(form, channel) {
@@ -3659,20 +3741,11 @@ function hiringDashboardView() {
     el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Создать заявку на подбор"]), el("span", {}, ["Для готовой вакансии или запроса на новую роль."])]),
       el("div", { class: "staff-form-grid" }, [
-        el("select", { class: "input compact-input", value: state.hiringRequestForm.requestType, onchange: event => { state.hiringRequestForm.requestType = event.target.value; render(); } }, [
-          el("option", { value: "start_existing", selected: state.hiringRequestForm.requestType === "start_existing" ? "selected" : null }, ["Запустить готовую вакансию"]),
-          el("option", { value: "new_vacancy", selected: state.hiringRequestForm.requestType === "new_vacancy" ? "selected" : null }, ["Запросить новую вакансию"])
-        ]),
-        state.hiringRequestForm.requestType === "start_existing"
-          ? el("select", { class: "input compact-input", value: state.hiringRequestForm.vacancyCode, onchange: event => { state.hiringRequestForm.vacancyCode = event.target.value; } }, [
-            el("option", { value: "" }, ["Выберите вакансию"]),
-            ...vacancyOptions(state.hiringRequestForm.vacancyCode)
-          ])
-          : el("input", { class: "input compact-input", placeholder: "Название новой вакансии", value: state.hiringRequestForm.title, oninput: event => { state.hiringRequestForm.title = event.target.value; } }),
+        adminField("Тип заявки", "Выберите, запускаем готовую вакансию или сначала создаем новую позицию.", requestTypeControl()),
+        hiringVacancyField(),
         openingReasonPicker(state.hiringRequestForm),
-        el("input", { class: "input compact-input", type: "number", min: "1", placeholder: "Сколько человек", value: state.hiringRequestForm.headcount, oninput: event => { state.hiringRequestForm.headcount = event.target.value; } }),
-        el("input", { class: "input compact-input", placeholder: "Желаемая дата выхода", value: state.hiringRequestForm.desiredStartDate, oninput: event => { state.hiringRequestForm.desiredStartDate = event.target.value; } }),
-        el("input", { class: "input compact-input", placeholder: "Комментарий", value: state.hiringRequestForm.comment, oninput: event => { state.hiringRequestForm.comment = event.target.value; } })
+        desiredStartDateField(state.hiringRequestForm),
+        commentField(state.hiringRequestForm)
       ]),
       el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
     ]),
@@ -3681,13 +3754,9 @@ function hiringDashboardView() {
     canCreateOpening ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Начать подбор по готовой вакансии"]), el("span", {}, ["Создает рабочую воронку по выбранной позиции."])]),
       el("div", { class: "staff-form-grid" }, [
-        el("select", { class: "input compact-input", value: state.openingForm.vacancyCode, onchange: event => { state.openingForm.vacancyCode = event.target.value; } }, [
-          el("option", { value: "" }, ["Выберите вакансию"]),
-          ...vacancyOptions(state.openingForm.vacancyCode)
-        ]),
+        openingVacancyField(),
         openingReasonPicker(state.openingForm),
-        el("input", { class: "input compact-input", type: "number", min: "1", placeholder: "Сколько человек", value: state.openingForm.headcount, oninput: event => { state.openingForm.headcount = event.target.value; } }),
-        el("input", { class: "input compact-input", placeholder: "Желаемая дата выхода", value: state.openingForm.desiredStartDate, oninput: event => { state.openingForm.desiredStartDate = event.target.value; } })
+        desiredStartDateField(state.openingForm)
       ]),
       recruitmentChannelPicker(state.openingForm),
       el("button", { class: "btn primary", onclick: createOpeningFromAdmin }, ["Начать подбор"])

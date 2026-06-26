@@ -3309,6 +3309,15 @@ h3 {
   font-weight: 900;
 }
 
+.field-hint {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0.78;
+}
+
 .question-count {
   display: block !important;
   min-height: 0 !important;
