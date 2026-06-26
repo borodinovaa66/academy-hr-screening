@@ -1,6 +1,8 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
+const APP_CLIENT_VERSION = "2026-06-26-01";
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
   personalDataConsent: "personal_data_consent_v2"
@@ -279,6 +281,9 @@ const state = {
   hhResponses: [],
   bitrixNotifications: null,
   bitrixNotificationDraft: null,
+  updateAvailable: false,
+  updateVersion: null,
+  updateCheckInProgress: false,
   candidateListExpanded: false,
   interviewCandidateId: "",
   interviewDrafts: {},
@@ -4165,6 +4170,7 @@ function adminView() {
     el("nav", { class: "topbar" }, [
       el("a", { class: "brand", href: "#candidate" }, [iconEl("chart"), "Платформа подбора"]),
       el("div", { class: "top-actions" }, [
+        updateNotice(),
         el("button", { class: "btn ghost", onclick: async () => { await loadAdmin(); render(); } }, ["Обновить"]),
         el("button", { class: "btn danger", onclick: async () => {
           await fetch("/api/auth/logout", { method: "POST" });
@@ -4532,6 +4538,46 @@ function showToast(text) {
   setTimeout(() => node.remove(), 2600);
 }
 
+async function checkAppVersion(showActualToast = false) {
+  if (state.updateCheckInProgress) return;
+  state.updateCheckInProgress = true;
+  try {
+    const response = await fetch(`/version.json?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("version_check_failed");
+    const versionInfo = await response.json();
+    const latestVersion = String(versionInfo.version || "").trim();
+    const available = Boolean(latestVersion && latestVersion !== APP_CLIENT_VERSION);
+    const changed = state.updateAvailable !== available || state.updateVersion?.version !== latestVersion;
+    state.updateAvailable = available;
+    state.updateVersion = versionInfo;
+    if (showActualToast && !available) showToast("У вас актуальная версия.");
+    if (changed && currentAppRoute() === "admin") render();
+  } catch {
+    if (showActualToast) showToast("Не удалось проверить обновления.");
+  } finally {
+    state.updateCheckInProgress = false;
+  }
+}
+
+function applyAppUpdate() {
+  window.location.reload();
+}
+
+function updateNotice() {
+  if (!state.updateAvailable) {
+    return el("div");
+  }
+  return el("button", {
+    class: "update-notice",
+    title: "На сервере доступна новая версия платформы",
+    onclick: applyAppUpdate
+  }, [
+    el("span", { class: "update-dot" }, ["!"]),
+    el("span", {}, ["Готовы обновления"]),
+    el("strong", {}, ["Обновиться"])
+  ]);
+}
+
 function siteFooter() {
   return el("footer", { class: "site-footer" }, [
     el("div", { class: "footer-main" }, [
@@ -4774,6 +4820,8 @@ async function boot() {
   } finally {
     state.loading = false;
     render();
+    checkAppVersion(false);
+    setInterval(() => checkAppVersion(false), UPDATE_CHECK_INTERVAL_MS);
   }
 }
 

@@ -630,6 +630,38 @@ body {
   white-space: nowrap;
 }
 
+.update-notice {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  padding: 0 16px;
+  background: var(--pastel-yellow);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 950;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.08);
+}
+
+.update-notice strong {
+  font-weight: 950;
+}
+
+.update-dot {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 950;
+}
+
 .staff-page,
 .audit-page {
   display: grid;

@@ -137,7 +137,7 @@ function sendJson(res, status, payload, headers = {}) {
 
 function staticHeaders(ext) {
   const headers = { "Content-Type": mime[ext] || "application/octet-stream" };
-  if ([".html", ".js", ".css"].includes(ext)) {
+  if ([".html", ".js", ".css", ".json"].includes(ext)) {
     headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
     headers.Pragma = "no-cache";
     headers.Expires = "0";
