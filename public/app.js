@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-07";
+const APP_CLIENT_VERSION = "2026-06-26-08";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -4090,15 +4090,6 @@ function headHunterDashboardView() {
           ])
         ]);
       }) : [el("div", { class: "empty" }, ["Публикаций пока нет."])])
-    ]),
-    el("section", { class: "table-panel" }, [
-      el("div", { class: "panel-head" }, [el("h2", {}, ["Отклики HeadHunter"]), el("span", {}, [`Всего: ${state.hhResponses.length}`])]),
-      ...(state.hhResponses.length ? state.hhResponses.map(item => el("div", { class: "staff-row" }, [
-        el("div", {}, [el("strong", {}, [item.candidateName || "Кандидат HeadHunter"]), el("span", {}, [item.resumeUrl || item.resumeId || "резюме без ссылки"])]),
-        el("div", {}, [vacancyLabel(item.vacancyCode)]),
-        el("div", {}, [item.questionnaireSent ? `анкета отправлена ${new Date(item.questionnaireSentAt).toLocaleString("ru-RU")}` : "анкета не отправлена"]),
-        item.questionnaireSent ? el("div") : el("button", { class: "btn primary", onclick: () => sendQuestionnaireToHhResponse(item) }, ["Отправить анкету"])
-      ])) : [el("div", { class: "empty" }, ["Откликов пока нет. После указания ID вакансии HeadHunter синхронизируйте публикацию."])])
     ])
   ]);
 }
