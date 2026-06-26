@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-09";
+const APP_CLIENT_VERSION = "2026-06-26-10";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -282,6 +282,9 @@ const state = {
   hhImporting: false,
   hhImportResult: null,
   vacancyDuplicateAnalysis: null,
+  platformQuestion: "",
+  platformAnswer: null,
+  platformQuestionLoading: false,
   hhResponses: [],
   bitrixNotifications: null,
   bitrixNotificationDraft: null,
@@ -487,6 +490,7 @@ function el(tag, attrs = {}, children = []) {
     if (key === "class") node.className = value;
     else if (key === "html") node.innerHTML = value;
     else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (key === "value" && "value" in node) node.value = value;
     else if (value !== undefined && value !== null) node.setAttribute(key, value);
   });
   children.forEach(child => node.append(child?.nodeType ? child : document.createTextNode(String(child))));
@@ -1717,6 +1721,82 @@ function vacancyDuplicateAnalysisPanel() {
   ]);
 }
 
+async function askPlatformQuestion() {
+  const question = String(state.platformQuestion || "").trim();
+  if (question.length < 4) return showToast("Напишите вопрос чуть подробнее.");
+  state.platformQuestionLoading = true;
+  state.platformAnswer = null;
+  render();
+  try {
+    const response = await fetch("/api/admin/platform-question", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Не удалось получить ответ.");
+    state.platformAnswer = data;
+  } catch (error) {
+    showToast(error.message || "Не удалось получить ответ платформы.");
+  } finally {
+    state.platformQuestionLoading = false;
+    render();
+  }
+}
+
+function askPlatformExample(question) {
+  state.platformQuestion = question;
+  askPlatformQuestion();
+}
+
+function platformAssistantPanel() {
+  const examples = [
+    "Менеджер проектов и проектный маркетолог - это дубли?",
+    "Какие вакансии сейчас выглядят похожими?",
+    "Что проверить перед объединением вакансий?"
+  ];
+  return el("section", { class: "overview-section platform-assistant-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Спросить платформу"]),
+        el("span", {}, ["Ответ по данным вакансий, подборов и подключенных интеграций."])
+      ]),
+      el("span", {}, [state.platformAnswer?.mode === "local" ? "локальный ответ" : state.platformAnswer ? "ответ нейросети" : ""])
+    ]),
+    el("div", { class: "platform-question-form" }, [
+      el("textarea", {
+        class: "textarea platform-question-input",
+        placeholder: "Например: менеджер проектов и проектный маркетолог - это дубли?",
+        value: state.platformQuestion,
+        oninput: event => {
+          state.platformQuestion = event.target.value;
+        }
+      }),
+      el("button", {
+        class: "btn primary platform-question-button",
+        onclick: askPlatformQuestion,
+        disabled: state.platformQuestionLoading ? "disabled" : null
+      }, [state.platformQuestionLoading ? "Думаю..." : "Задать вопрос", iconEl("arrow")])
+    ]),
+    el("div", { class: "platform-question-examples" }, examples.map(question => (
+      el("button", { class: "chip-button", onclick: () => askPlatformExample(question) }, [question])
+    ))),
+    state.platformAnswer
+      ? el("div", { class: "platform-answer" }, [
+        el("strong", {}, ["Ответ"]),
+        ...String(state.platformAnswer.answer || "")
+          .split(/\n+/)
+          .map(part => part.trim())
+          .filter(Boolean)
+          .map(part => el("p", {}, [part])),
+        state.platformAnswer.contextSummary
+          ? el("small", {}, [`Учтено вакансий: ${state.platformAnswer.contextSummary.vacancies || 0}; групп дублей: ${state.platformAnswer.contextSummary.duplicateGroups || 0}.`])
+          : el("small")
+      ])
+      : el("div")
+  ]);
+}
+
 function adminOverviewView() {
   const vacancies = Object.entries(state.vacancies || {});
   const activeVacancies = vacancies.filter(([, vacancy]) => vacancy.active !== false).length;
@@ -1746,6 +1826,7 @@ function adminOverviewView() {
       ]),
       vacancies.length ? el("div", { class: "overview-vacancy-grid" }, vacancies.map(([code, vacancy]) => overviewVacancyCard(code, vacancy))) : el("div", { class: "empty" }, ["Пока нет заведенных вакансий."])
     ]),
+    platformAssistantPanel(),
     vacancyDuplicateAnalysisPanel(),
     el("section", { class: "overview-section overview-guide" }, [
       el("div", {}, [

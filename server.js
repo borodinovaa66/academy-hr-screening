@@ -1896,6 +1896,170 @@ function findVacancyDuplicateGroups(session) {
   };
 }
 
+function buildPlatformQuestionContext(session) {
+  const config = getQuestionnaireConfig();
+  const visible = visibleVacancies(session, config);
+  const submissions = listSubmissions();
+  const publications = listHhPublications();
+  const responses = listHhResponses();
+  const openings = listVacancyOpenings();
+  const duplicateAnalysis = findVacancyDuplicateGroups(session);
+  const vacancies = Object.entries(visible).map(([code, vacancy]) => {
+    const vacancySubmissions = submissions.filter(item => item.vacancyCode === code);
+    const vacancyPublications = publications.filter(item => item.vacancyCode === code);
+    const vacancyResponses = responses.filter(item => item.vacancyCode === code);
+    const vacancyOpenings = openings.filter(item => item.vacancyCode === code);
+    const activeOpenings = vacancyOpenings.filter(item => !["closed", "cancelled"].includes(item.status));
+    return {
+      code,
+      title: vacancy.adminTitle || vacancy.title || vacancy.publicTitle || code,
+      publicTitle: vacancy.publicTitle || vacancy.title || vacancy.adminTitle || code,
+      active: vacancy.active !== false,
+      questionnaireCount: vacancySubmissions.length,
+      hhResponseCount: vacancyResponses.length,
+      hhPublicationCount: vacancyPublications.length,
+      activeOpeningCount: activeOpenings.length,
+      hhVacancyIds: vacancyPublications.map(item => item.hhVacancyId).filter(Boolean),
+      hhVacancyNames: vacancyPublications
+        .map(item => item.hhData?.name || item.payload?.name || item.title || "")
+        .filter(Boolean)
+    };
+  });
+  const hhAccount = getHhIntegrationAccount();
+  return {
+    product: "HR-платформа Бизнес-школы \"Академия менеджмента\"",
+    userRole: session?.role || "unknown",
+    checkedAt: new Date().toISOString(),
+    headHunterConnected: Boolean(hhAccount?.accessToken),
+    vacancies,
+    duplicateAnalysis,
+    currentRules: [
+      "Публикация вакансии требует проверки и подтверждения человеком.",
+      "Сообщения с анкетой отправляются кандидатам после отклика на HeadHunter.",
+      "Оценка тестового задания: руководитель ставит финальный ручной балл, нейросеть дает второе мнение.",
+      "Удаление или объединение вакансий должно выполняться только после проверки связей с кандидатами, публикациями и активными подборами."
+    ]
+  };
+}
+
+function platformQuestionPrompt(question, context) {
+  return [
+    "Ты внутренний помощник HR-платформы Бизнес-школы \"Академия менеджмента\".",
+    "Отвечай пользователю как практичный эксперт по платформе и подбору персонала.",
+    "Пиши только по-русски. Не используй английские служебные слова и англицизмы, кроме названий сервисов HeadHunter и Telegram.",
+    "Если вопрос про дубли вакансий, различай: явный дубль, похожие роли, разные роли. Не советуй удалять вакансию без проверки связей.",
+    "Если данных платформы недостаточно, прямо скажи, чего не хватает и что проверить.",
+    "Ответ должен быть коротким: 2-5 абзацев или короткий список. Без Markdown-таблиц.",
+    "",
+    "Вопрос пользователя:",
+    question,
+    "",
+    "Контекст платформы в JSON:",
+    JSON.stringify(context)
+  ].join("\n");
+}
+
+function localPlatformQuestionAnswer(question, context) {
+  const text = String(question || "").toLowerCase();
+  const duplicateGroups = context.duplicateAnalysis?.duplicateGroups || [];
+  const vacancies = context.vacancies || [];
+  const projectRoles = vacancies.filter(item => /проект|project|проджект|менеджер проектов|маркетолог/i.test(`${item.title} ${item.publicTitle}`));
+  if (/дубл|одинаков|повтор|похож/.test(text)) {
+    if (duplicateGroups.length) {
+      const groupText = duplicateGroups.map(group => group.summary || group.all?.map(item => item.title).join(", ")).filter(Boolean).join(" ");
+      return {
+        mode: "local",
+        answer: `Платформа нашла возможные дубли: ${groupText} Проверьте, описывают ли они одну и ту же роль. Если да, оставьте вакансию с большим числом связей с кандидатами и публикациями, а вторую объедините или закройте после переноса данных.`
+      };
+    }
+    if (projectRoles.length >= 2) {
+      return {
+        mode: "local",
+        answer: "Менеджер проектов и проектный маркетолог не выглядят явными дублями. Обычно первая роль отвечает за управление сроками, задачами, людьми и результатом проекта, а вторая сильнее привязана к маркетинговым запускам, упаковке, воронке, контенту и продвижению. Если в ваших описаниях задачи совпадают на 70-80%, их лучше объединить или переименовать так, чтобы отличие было понятно пользователю."
+      };
+    }
+    return {
+      mode: "local",
+      answer: `Явных дублей сейчас не видно. Проверено вакансий: ${context.duplicateAnalysis?.totalVacancies || vacancies.length}. Если сомневаетесь по двум ролям, сравните задачи, результат роли, инструменты и канал подбора: при сильном совпадении лучше оставить одну вакансию, при разной зоне ответственности - переименовать роли точнее.`
+    };
+  }
+  return {
+    mode: "local",
+    answer: `На платформе сейчас ${vacancies.length} ${pluralServer(vacancies.length, "вакансия", "вакансии", "вакансий")}. HeadHunter ${context.headHunterConnected ? "подключен" : "не подключен"}. Задайте вопрос про конкретную вакансию, дубль, отклики, анкету или следующий шаг воронки - я отвечу по данным, которые есть в системе.`
+  };
+}
+
+async function answerPlatformQuestion(question, session) {
+  const context = buildPlatformQuestionContext(session);
+  if (AI_PROVIDER === "yandex" && YANDEX_GPT_API_KEY && YANDEX_FOLDER_ID) {
+    const response = await fetch("https://llm.api.cloud.yandex.net/foundationModels/v1/completion", {
+      method: "POST",
+      headers: {
+        "Authorization": `Api-Key ${YANDEX_GPT_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        modelUri: `gpt://${YANDEX_FOLDER_ID}/${YANDEX_GPT_MODEL}/latest`,
+        completionOptions: { stream: false, temperature: 0.15, maxTokens: 1200 },
+        messages: [
+          { role: "system", text: "Отвечай по-русски, кратко и прикладно. Не используй английские служебные слова." },
+          { role: "user", text: platformQuestionPrompt(question, context) }
+        ]
+      })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      mode: "yandex",
+      answer: cleanText(data.result?.alternatives?.[0]?.message?.text || "", 4000) || localPlatformQuestionAnswer(question, context).answer,
+      contextSummary: {
+        vacancies: context.vacancies.length,
+        duplicateGroups: context.duplicateAnalysis?.duplicateGroups?.length || 0,
+        headHunterConnected: context.headHunterConnected
+      }
+    };
+  }
+
+  if (OPENAI_API_KEY) {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: "Отвечай по-русски, кратко и прикладно. Не используй английские служебные слова." },
+          { role: "user", content: platformQuestionPrompt(question, context) }
+        ],
+        temperature: 0.15
+      })
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      mode: "ai",
+      answer: cleanText(data.choices?.[0]?.message?.content || "", 4000) || localPlatformQuestionAnswer(question, context).answer,
+      contextSummary: {
+        vacancies: context.vacancies.length,
+        duplicateGroups: context.duplicateAnalysis?.duplicateGroups?.length || 0,
+        headHunterConnected: context.headHunterConnected
+      }
+    };
+  }
+
+  const local = localPlatformQuestionAnswer(question, context);
+  return {
+    ...local,
+    contextSummary: {
+      vacancies: context.vacancies.length,
+      duplicateGroups: context.duplicateAnalysis?.duplicateGroups?.length || 0,
+      headHunterConnected: context.headHunterConnected
+    }
+  };
+}
+
 function pluralServer(number, one, few, many) {
   const n = Math.abs(Number(number || 0)) % 100;
   const n1 = n % 10;
@@ -3308,6 +3472,49 @@ async function handleApi(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/admin/vacancy-duplicate-analysis") {
     return sendJson(res, 200, findVacancyDuplicateGroups(adminSession));
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/platform-question") {
+    const payload = await readBody(req);
+    const question = cleanText(payload.question, 1000);
+    if (question.length < 4) return sendJson(res, 400, { error: "Напишите вопрос чуть подробнее." });
+    try {
+      const result = await answerPlatformQuestion(question, adminSession);
+      insertAuditLog({
+        user: adminSession,
+        action: "platform.question",
+        targetType: "assistant",
+        targetId: "platform",
+        payload: {
+          question: question.slice(0, 300),
+          mode: result.mode,
+          contextSummary: result.contextSummary
+        }
+      });
+      return sendJson(res, 200, {
+        ok: true,
+        question,
+        answer: result.answer,
+        mode: result.mode,
+        contextSummary: result.contextSummary,
+        answeredAt: new Date().toISOString()
+      });
+    } catch (error) {
+      const context = buildPlatformQuestionContext(adminSession);
+      const fallback = localPlatformQuestionAnswer(question, context);
+      return sendJson(res, 200, {
+        ok: true,
+        question,
+        answer: `${fallback.answer}\n\nНейросетевой ответ временно недоступен: ${error.message}.`,
+        mode: "local",
+        contextSummary: {
+          vacancies: context.vacancies.length,
+          duplicateGroups: context.duplicateAnalysis?.duplicateGroups?.length || 0,
+          headHunterConnected: context.headHunterConnected
+        },
+        answeredAt: new Date().toISOString()
+      });
+    }
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/vacancy-draft") {
