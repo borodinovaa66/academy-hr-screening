@@ -888,10 +888,11 @@ body {
 }
 
 .hh-payment-summary strong,
-.hh-payment-variant strong,
-.hh-promotion-row strong {
+.hh-payment-variant strong {
   color: var(--ink);
-  font-weight: 900;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.25;
 }
 
 .hh-payment-summary span,
@@ -920,10 +921,10 @@ body {
 
 .hh-promotion-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) minmax(140px, 0.6fr) minmax(180px, 0.8fr) minmax(160px, 0.7fr);
-  gap: 12px;
-  align-items: center;
-  padding: 12px;
+  grid-template-columns: minmax(240px, 1.3fr) minmax(140px, 0.65fr) minmax(180px, 0.85fr) minmax(160px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+  padding: 14px 16px;
 }
 
 .hh-promotion-row.promoted {
@@ -932,8 +933,35 @@ body {
 }
 
 .hh-promotion-row > div {
+  display: grid;
+  gap: 4px;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.hh-promotion-row strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.hh-promotion-row > div:first-child strong {
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.hh-promotion-row > div:first-child span {
+  font-size: 12px;
+}
+
+.staff-row strong,
+.audit-row strong,
+.hh-publication-row strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .vacancy-builder-intro .panel-head {
