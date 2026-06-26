@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-02";
+const APP_CLIENT_VERSION = "2026-06-26-03";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -3143,7 +3143,7 @@ function hiringVacancyField() {
 }
 
 function desiredStartDateField(form) {
-  return adminInputField("Желаемая дата выхода", "Можно указать точную дату или ориентир: как можно скорее, в течение месяца.", {
+  return adminInputField("Желаемый срок выхода", "Можно указать точную дату или ориентир по сроку: как можно скорее, в течение месяца.", {
     class: "input compact-input",
     placeholder: "Например: в течение месяца",
     value: form.desiredStartDate,
