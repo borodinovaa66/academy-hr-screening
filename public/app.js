@@ -288,6 +288,7 @@ const state = {
     vacancyCode: "",
     title: "",
     reason: "",
+    reasonMode: "preset",
     urgency: "normal",
     desiredStartDate: "",
     headcount: 1,
@@ -299,6 +300,7 @@ const state = {
   openingForm: {
     vacancyCode: "",
     reason: "",
+    reasonMode: "preset",
     urgency: "normal",
     desiredStartDate: "",
     headcount: 1,
@@ -3057,6 +3059,52 @@ function recruitmentChannelsText(channels = []) {
   return channels.length ? channels.map(recruitmentChannelLabel).join(", ") : "каналы не выбраны";
 }
 
+const OPENING_REASON_OPTIONS = [
+  "Расширение команды",
+  "Замена сотрудника",
+  "Сотрудник уходит или уже ушел",
+  "Рост объема задач",
+  "Запуск нового проекта или направления",
+  "Усиление слабого участка работы",
+  "Временная нагрузка или сезонный пик",
+  "Формирование новой функции с нуля",
+  "Кадровый резерв на ближайший запуск"
+];
+
+function openingReasonPicker(form) {
+  const selectedPreset = OPENING_REASON_OPTIONS.includes(form.reason) && form.reasonMode !== "other" ? form.reason : "";
+  const isOther = form.reasonMode === "other" || (form.reason && !OPENING_REASON_OPTIONS.includes(form.reason));
+  return el("div", { class: "reason-picker" }, [
+    el("select", {
+      class: "input compact-input",
+      value: isOther ? "__other__" : selectedPreset,
+      onchange: event => {
+        if (event.target.value === "__other__") {
+          form.reasonMode = "other";
+          form.reason = "";
+        } else {
+          form.reasonMode = "preset";
+          form.reason = event.target.value;
+        }
+        render();
+      }
+    }, [
+      el("option", { value: "" }, ["Причина открытия"]),
+      ...OPENING_REASON_OPTIONS.map(reason => el("option", {
+        value: reason,
+        selected: selectedPreset === reason ? "selected" : null
+      }, [reason])),
+      el("option", { value: "__other__", selected: isOther ? "selected" : null }, ["Другое"])
+    ]),
+    isOther ? el("input", {
+      class: "input compact-input",
+      placeholder: "Введите свою причину",
+      value: form.reason || "",
+      oninput: event => { form.reason = event.target.value; }
+    }) : el("div")
+  ]);
+}
+
 function toggleRecruitmentChannel(form, channel) {
   const current = Array.isArray(form.recruitmentChannels) ? form.recruitmentChannels : [];
   form.recruitmentChannels = current.includes(channel)
@@ -3097,7 +3145,7 @@ async function createHiringRequestFromAdmin() {
     const error = await response.json().catch(() => ({ error: "Не удалось создать заявку." }));
     return showToast(error.error || "Не удалось создать заявку.");
   }
-  state.hiringRequestForm = { requestType: "start_existing", vacancyCode: "", title: "", reason: "", urgency: "normal", desiredStartDate: "", headcount: 1, responsibilities: "", expectedResult: "", budget: "", comment: "" };
+  state.hiringRequestForm = { requestType: "start_existing", vacancyCode: "", title: "", reason: "", reasonMode: "preset", urgency: "normal", desiredStartDate: "", headcount: 1, responsibilities: "", expectedResult: "", budget: "", comment: "" };
   await loadAdmin();
   showToast("Заявка на подбор создана.");
   render();
@@ -3116,7 +3164,7 @@ async function createOpeningFromAdmin() {
     const error = await response.json().catch(() => ({ error: "Не удалось запустить подбор." }));
     return showToast(error.error || "Не удалось запустить подбор.");
   }
-  state.openingForm = { vacancyCode: "", reason: "", urgency: "normal", desiredStartDate: "", headcount: 1, recruitmentChannels: ["hh"] };
+  state.openingForm = { vacancyCode: "", reason: "", reasonMode: "preset", urgency: "normal", desiredStartDate: "", headcount: 1, recruitmentChannels: ["hh"] };
   await loadAdmin();
   showToast("Запуск подбора создан.");
   render();
@@ -3621,7 +3669,7 @@ function hiringDashboardView() {
             ...vacancyOptions(state.hiringRequestForm.vacancyCode)
           ])
           : el("input", { class: "input compact-input", placeholder: "Название новой вакансии", value: state.hiringRequestForm.title, oninput: event => { state.hiringRequestForm.title = event.target.value; } }),
-        el("input", { class: "input compact-input", placeholder: "Причина открытия", value: state.hiringRequestForm.reason, oninput: event => { state.hiringRequestForm.reason = event.target.value; } }),
+        openingReasonPicker(state.hiringRequestForm),
         el("input", { class: "input compact-input", type: "number", min: "1", placeholder: "Сколько человек", value: state.hiringRequestForm.headcount, oninput: event => { state.hiringRequestForm.headcount = event.target.value; } }),
         el("input", { class: "input compact-input", placeholder: "Желаемая дата выхода", value: state.hiringRequestForm.desiredStartDate, oninput: event => { state.hiringRequestForm.desiredStartDate = event.target.value; } }),
         el("input", { class: "input compact-input", placeholder: "Комментарий", value: state.hiringRequestForm.comment, oninput: event => { state.hiringRequestForm.comment = event.target.value; } })
@@ -3637,7 +3685,7 @@ function hiringDashboardView() {
           el("option", { value: "" }, ["Выберите вакансию"]),
           ...vacancyOptions(state.openingForm.vacancyCode)
         ]),
-        el("input", { class: "input compact-input", placeholder: "Причина открытия", value: state.openingForm.reason, oninput: event => { state.openingForm.reason = event.target.value; } }),
+        openingReasonPicker(state.openingForm),
         el("input", { class: "input compact-input", type: "number", min: "1", placeholder: "Сколько человек", value: state.openingForm.headcount, oninput: event => { state.openingForm.headcount = event.target.value; } }),
         el("input", { class: "input compact-input", placeholder: "Желаемая дата выхода", value: state.openingForm.desiredStartDate, oninput: event => { state.openingForm.desiredStartDate = event.target.value; } })
       ]),

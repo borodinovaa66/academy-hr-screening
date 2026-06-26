@@ -681,6 +681,16 @@ body {
   font-size: 16px;
 }
 
+.reason-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.reason-picker .compact-input {
+  width: 100%;
+}
+
 .staff-vacancy-access {
   display: grid;
   gap: 10px;
