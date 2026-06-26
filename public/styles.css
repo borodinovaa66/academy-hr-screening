@@ -679,6 +679,27 @@ body {
   gap: 12px;
 }
 
+.admin-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.admin-form-actions.inline-actions {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+.admin-form-actions .btn {
+  width: auto;
+  min-width: 176px;
+  max-width: 260px;
+  padding-inline: 22px;
+  white-space: nowrap;
+}
+
 .choice-line {
   display: flex;
   align-items: center;
@@ -1239,6 +1260,10 @@ body {
   }
 
   .hh-publication-actions {
+    justify-content: flex-start;
+  }
+
+  .admin-form-actions {
     justify-content: flex-start;
   }
 }
@@ -3191,6 +3216,17 @@ h3 {
   .form-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-form-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .admin-form-actions .btn {
+    width: 100%;
+    max-width: none;
   }
 
   .dash-header h1 {

@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-01";
+const APP_CLIENT_VERSION = "2026-06-26-02";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -3132,36 +3132,14 @@ function vacancySelectControl(value, onChange) {
   ]);
 }
 
-function requestTypeControl() {
-  return el("select", {
-    class: "input compact-input",
-    value: state.hiringRequestForm.requestType,
-    onchange: event => {
-      state.hiringRequestForm.requestType = event.target.value;
-      render();
-    }
-  }, [
-    el("option", { value: "start_existing", selected: state.hiringRequestForm.requestType === "start_existing" ? "selected" : null }, ["Запустить готовую вакансию"]),
-    el("option", { value: "new_vacancy", selected: state.hiringRequestForm.requestType === "new_vacancy" ? "selected" : null }, ["Запросить новую вакансию"])
-  ]);
-}
-
 function hiringVacancyField() {
-  if (state.hiringRequestForm.requestType === "start_existing") {
-    return adminField(
-      "Готовая вакансия",
-      "Выберите позицию из справочника, если она уже заведена в системе.",
-      vacancySelectControl(state.hiringRequestForm.vacancyCode, event => {
-        state.hiringRequestForm.vacancyCode = event.target.value;
-      })
-    );
-  }
-  return adminInputField("Новая вакансия", "Напишите название позиции, которую нужно добавить в справочник.", {
-    class: "input compact-input",
-    placeholder: "Например: личный ассистент",
-    value: state.hiringRequestForm.title,
-    oninput: event => { state.hiringRequestForm.title = event.target.value; }
-  });
+  return adminField(
+    "Готовая вакансия",
+    "Выберите позицию из справочника, если она уже заведена в системе.",
+    vacancySelectControl(state.hiringRequestForm.vacancyCode, event => {
+      state.hiringRequestForm.vacancyCode = event.target.value;
+    })
+  );
 }
 
 function desiredStartDateField(form) {
@@ -3220,9 +3198,8 @@ function recruitmentChannelPicker(form) {
 }
 
 async function createHiringRequestFromAdmin() {
-  const payload = { ...state.hiringRequestForm };
-  if (payload.requestType === "start_existing" && !payload.vacancyCode) return showToast("Выберите вакансию из справочника.");
-  if (!payload.title && !payload.vacancyCode) return showToast("Укажите название новой вакансии.");
+  const payload = { ...state.hiringRequestForm, requestType: "start_existing", title: "", headcount: 1 };
+  if (!payload.vacancyCode) return showToast("Выберите вакансию из справочника.");
   const response = await fetch("/api/admin/hiring-requests", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3586,7 +3563,9 @@ function vacancyWizardPanel() {
           el("h2", {}, ["Создать новую вакансию"]),
           el("span", {}, ["Если нужной позиции нет в справочнике, опишите ее текстом или голосом. Система подготовит профиль роли, обязанности, текст для hh.ru и основу анкеты."])
         ]),
-        el("button", { class: "btn primary", onclick: openVacancyWizard }, [iconEl("plus"), "Создать вакансию"])
+        el("div", { class: "admin-form-actions inline-actions" }, [
+          el("button", { class: "btn primary", onclick: openVacancyWizard }, [iconEl("plus"), "Создать вакансию"])
+        ])
       ])
     ]);
   }
@@ -3740,19 +3719,20 @@ function hiringDashboardView() {
       el("div", {}, [
         el("div", { class: "badge" }, [iconEl("filter"), "Старт воронки"]),
         el("h1", {}, ["Подобрать сотрудника"]),
-        el("p", {}, ["Выберите готовую вакансию или запросите новую позицию, чтобы запустить воронку подбора."])
+        el("p", {}, ["Выберите готовую вакансию из справочника или создайте новую позицию отдельным сценарием ниже."])
       ])
     ]),
     el("section", { class: "table-panel staff-form" }, [
-      el("div", { class: "panel-head" }, [el("h2", {}, ["Создать заявку на подбор"]), el("span", {}, ["Для готовой вакансии или запроса на новую роль."])]),
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Заявка по готовой вакансии"]), el("span", {}, ["Выберите позицию из справочника и укажите причину открытия."])]),
       el("div", { class: "staff-form-grid" }, [
-        adminField("Тип заявки", "Выберите, запускаем готовую вакансию или сначала создаем новую позицию.", requestTypeControl()),
         hiringVacancyField(),
         openingReasonPicker(state.hiringRequestForm),
         desiredStartDateField(state.hiringRequestForm),
         commentField(state.hiringRequestForm)
       ]),
-      el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
+      el("div", { class: "admin-form-actions" }, [
+        el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
+      ])
     ]),
     canCreateOpening ? vacancyWizardPanel() : el("div"),
     canCreateOpening ? createdVacancyReviewPanel() : el("div"),
@@ -3764,7 +3744,9 @@ function hiringDashboardView() {
         desiredStartDateField(state.openingForm)
       ]),
       recruitmentChannelPicker(state.openingForm),
-      el("button", { class: "btn primary", onclick: createOpeningFromAdmin }, ["Начать подбор"])
+      el("div", { class: "admin-form-actions" }, [
+        el("button", { class: "btn primary", onclick: createOpeningFromAdmin }, ["Начать подбор"])
+      ])
     ]) : el("div"),
     el("section", { class: "table-panel" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Заявки"]), el("span", {}, [`Всего: ${state.hiringRequests.length}`])]),
