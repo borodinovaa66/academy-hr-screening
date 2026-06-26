@@ -860,6 +860,82 @@ body {
   background: rgba(204, 245, 215, 0.58);
 }
 
+.hh-promotion-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.hh-payment-summary,
+.hh-payment-variants {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hh-payment-summary > div,
+.hh-payment-variant,
+.hh-promotion-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.hh-payment-summary > div,
+.hh-payment-variant {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+}
+
+.hh-payment-summary strong,
+.hh-payment-variant strong,
+.hh-promotion-row strong {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.hh-payment-summary span,
+.hh-payment-variant span,
+.hh-payment-variant em,
+.hh-promotion-row span {
+  color: var(--muted);
+  font-size: 14px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.compact-head {
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.compact-head h3 {
+  margin: 0;
+}
+
+.hh-promotion-list {
+  display: grid;
+  gap: 10px;
+}
+
+.hh-promotion-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(140px, 0.6fr) minmax(180px, 0.8fr) minmax(160px, 0.7fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+}
+
+.hh-promotion-row.promoted {
+  background: rgba(204, 245, 215, 0.48);
+  border-color: rgba(9, 100, 102, 0.36);
+}
+
+.hh-promotion-row > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .vacancy-builder-intro .panel-head {
   align-items: center;
 }
@@ -1252,6 +1328,9 @@ body {
   .staff-form-grid,
   .vacancy-draft-grid,
   .vacancy-review-grid,
+  .hh-payment-summary,
+  .hh-payment-variants,
+  .hh-promotion-row,
   .staff-row,
   .staff-account-row,
   .audit-row,

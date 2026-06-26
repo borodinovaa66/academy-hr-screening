@@ -82,6 +82,8 @@ const HH_REDIRECT_URI = process.env.HH_REDIRECT_URI || "https://hr.academy-manag
 const HH_USER_AGENT = process.env.HH_USER_AGENT || "AcademyHR/1.0 (hr@praktiki.pro)";
 const HH_WEBHOOK_SECRET = process.env.HH_WEBHOOK_SECRET || "";
 const HH_WEBHOOK_URL = process.env.HH_WEBHOOK_URL || (HH_WEBHOOK_SECRET ? `https://hr.academy-management.ru/api/hh/webhook?token=${encodeURIComponent(HH_WEBHOOK_SECRET)}` : "");
+const HH_VACANCY_IMPORT_INTERVAL_MS = Number(process.env.HH_VACANCY_IMPORT_INTERVAL_MS || 60 * 60 * 1000);
+const HH_VACANCY_AUTO_IMPORT_DISABLED = process.env.HH_VACANCY_AUTO_IMPORT_DISABLED === "1";
 const HH_API_BASE = "https://api.hh.ru";
 const HH_AUTH_BASE = "https://hh.ru/oauth/authorize";
 const HH_TOKEN_URL = "https://hh.ru/oauth/token";
@@ -1576,6 +1578,429 @@ function normalizeHhVacancyMetrics(data = {}) {
   };
 }
 
+function hhEmployerIdFromAccount(account = {}) {
+  return account.me?.employer?.id
+    || account.me?.employers?.[0]?.id
+    || account.me?.manager?.employer?.id
+    || account.me?.manager?.employer_id
+    || "";
+}
+
+function hhPropertyLabel(type) {
+  const labels = {
+    HH_STANDARD: "Стандарт",
+    HH_STANDARD_PLUS: "Стандарт плюс",
+    HH_PREMIUM: "Премиум",
+    HH_VP_OPTIMUM: "Оптимум",
+    HH_FREE: "Бесплатная публикация",
+    HH_ANONYMOUS: "Анонимная публикация",
+    HH_ADVERTISING: "Рекламная публикация",
+    ZP_CROSSPOSTING: "Дополнительное размещение"
+  };
+  return labels[type] || type || "Неизвестное свойство";
+}
+
+function normalizeHhPromotionStatus(vacancy = {}) {
+  const rawProperties = vacancy.vacancy_properties?.properties || [];
+  const propertyTypes = rawProperties.map(item => item.property_type).filter(Boolean);
+  const promotionTypes = propertyTypes.filter(type => !["HH_STANDARD", "HH_FREE", "ZP_CROSSPOSTING"].includes(type));
+  const billingName = vacancy.vacancy_properties?.appearance?.title
+    || vacancy.billing_type?.name
+    || (vacancy.premium ? "Премиум" : "Стандарт");
+  const isPromoted = Boolean(vacancy.premium)
+    || promotionTypes.some(type => ["HH_PREMIUM", "HH_STANDARD_PLUS", "HH_VP_OPTIMUM", "HH_ADVERTISING"].includes(type));
+  const properties = rawProperties.map(item => ({
+    type: item.property_type || "",
+    label: hhPropertyLabel(item.property_type),
+    startAt: item.start_time || item.startAt || null,
+    endAt: item.end_time || item.endAt || null
+  }));
+  const promotionProperties = properties.filter(item => !["HH_STANDARD", "HH_FREE", "ZP_CROSSPOSTING"].includes(item.type));
+  const endAt = properties
+    .map(item => item.endAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || vacancy.expires_at || null;
+  return {
+    publicationType: billingName,
+    promoted: isPromoted,
+    promotionLabel: isPromoted
+      ? (promotionProperties.map(item => item.label).join(", ") || billingName)
+      : "Без платного продвижения",
+    properties,
+    endAt
+  };
+}
+
+async function listAllHhActiveVacancies(employerId) {
+  const items = [];
+  for (let page = 0; page < 20; page += 1) {
+    const data = await hhApi(`/employers/${encodeURIComponent(employerId)}/vacancies/active?all_accessible=true&per_page=50&page=${page}`);
+    items.push(...(data.items || []));
+    const pages = Number(data.pages || 1);
+    if (page >= pages - 1) break;
+  }
+  return items;
+}
+
+async function getHhPromotionStatus() {
+  const account = await refreshHhAccountIfNeeded();
+  if (!account?.accessToken) throw new Error("HeadHunter не подключен.");
+  const me = await hhApi("/me").catch(() => null);
+  const employerId = me?.employer?.id
+    || me?.employers?.[0]?.id
+    || me?.manager?.employer?.id
+    || me?.manager?.employer_id
+    || hhEmployerIdFromAccount(account);
+  if (!employerId) throw new Error("Не удалось определить работодателя HeadHunter.");
+
+  const [availablePublicationsResult, payableActionsResult, activeVacanciesResult] = await Promise.allSettled([
+    hhApi(`/employers/${encodeURIComponent(employerId)}/services/available_publications`),
+    hhApi(`/employers/${encodeURIComponent(employerId)}/services/payable_api_actions/active`),
+    listAllHhActiveVacancies(employerId)
+  ]);
+
+  const publicationVariants = availablePublicationsResult.status === "fulfilled"
+    ? (availablePublicationsResult.value.publication_variants || [])
+    : [];
+  const availablePublications = publicationVariants.map(item => ({
+    title: item.appearance?.title || "Пакет публикаций",
+    description: item.appearance?.description || "",
+    count: Number(item.available_publications_count || 0),
+    propertyTypes: (item.vacancy_properties?.required || []).map(prop => prop.property_type).filter(Boolean)
+  }));
+  const availableTotal = availablePublications.reduce((sum, item) => sum + item.count, 0);
+  const payableActions = payableActionsResult.status === "fulfilled"
+    ? (payableActionsResult.value.items || [])
+    : [];
+  const activeVacancies = activeVacanciesResult.status === "fulfilled" ? activeVacanciesResult.value : [];
+  return {
+    employer: {
+      id: String(employerId),
+      name: me?.employer?.name || account.me?.employer?.name || ""
+    },
+    fetchedAt: new Date().toISOString(),
+    accountPayment: {
+      hasAvailablePublications: availableTotal > 0,
+      availableTotal,
+      availablePublications,
+      payableActionsCount: payableActions.length,
+      payableActions: payableActions.map(item => ({
+        id: item.id || item.type || item.name || "",
+        name: item.name || item.title || item.id || "Оплачиваемое действие",
+        description: item.description || ""
+      })),
+      errors: {
+        availablePublications: availablePublicationsResult.status === "rejected" ? availablePublicationsResult.reason.message : "",
+        payableActions: payableActionsResult.status === "rejected" ? payableActionsResult.reason.message : "",
+        activeVacancies: activeVacanciesResult.status === "rejected" ? activeVacanciesResult.reason.message : ""
+      }
+    },
+    vacancies: activeVacancies.map(vacancy => {
+      const promotion = normalizeHhPromotionStatus(vacancy);
+      return {
+        id: String(vacancy.id || ""),
+        name: vacancy.name || "",
+        url: vacancy.alternate_url || "",
+        area: vacancy.area?.name || "",
+        publishedAt: vacancy.published_at || vacancy.created_at || null,
+        expiresAt: vacancy.expires_at || null,
+        billingType: vacancy.billing_type?.name || "",
+        canUpgrade: Boolean(vacancy.can_upgrade_billing_type),
+        counters: vacancy.counters || {},
+        promotion
+      };
+    })
+  };
+}
+
+function htmlToPlainText(value = "") {
+  return String(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function hhSalaryText(salary = null) {
+  if (!salary) return "";
+  const parts = [];
+  if (salary.from) parts.push(`от ${salary.from}`);
+  if (salary.to) parts.push(`до ${salary.to}`);
+  if (salary.currency) parts.push(salary.currency);
+  if (salary.gross !== undefined) parts.push(salary.gross ? "до вычета налогов" : "на руки");
+  return parts.join(" ");
+}
+
+function hhVacancySourceText(vacancy = {}) {
+  const skills = (vacancy.key_skills || []).map(item => item.name).filter(Boolean);
+  return [
+    `Вакансия на HeadHunter: ${vacancy.name || "без названия"}`,
+    vacancy.area?.name ? `Город или регион: ${vacancy.area.name}` : "",
+    vacancy.employment?.name ? `Занятость: ${vacancy.employment.name}` : "",
+    vacancy.schedule?.name ? `График: ${vacancy.schedule.name}` : "",
+    vacancy.experience?.name ? `Опыт: ${vacancy.experience.name}` : "",
+    hhSalaryText(vacancy.salary) ? `Доход: ${hhSalaryText(vacancy.salary)}` : "",
+    skills.length ? `Ключевые навыки: ${skills.join(", ")}` : "",
+    "",
+    htmlToPlainText(vacancy.description || "")
+  ].filter(Boolean).join("\n");
+}
+
+function safeHhVacancyCode(vacancy, existingCodes = []) {
+  const baseTitle = vacancy.name || `headhunter-${vacancy.id || Date.now()}`;
+  let code = makeVacancyCode(baseTitle, existingCodes);
+  const suffix = String(vacancy.id || "").trim();
+  if (suffix && existingCodes.includes(code)) {
+    code = makeVacancyCode(`${baseTitle} ${suffix}`, existingCodes);
+  }
+  return code;
+}
+
+function normalizeVacancyTitleForMatch(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/gi, " ")
+    .replace(/\b(менеджер|manager|специалист|вакансия|удаленно|онлайн)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findExistingVacancyCodeByTitle(title, config = getQuestionnaireConfig()) {
+  const target = normalizeVacancyTitleForMatch(title);
+  if (!target) return "";
+  const vacancies = config.vacancies || {};
+  const entries = Object.entries(vacancies).map(([code, vacancy]) => ({
+    code,
+    title: normalizeVacancyTitleForMatch(vacancy.publicTitle || vacancy.title || vacancy.adminTitle || code)
+  }));
+  const exact = entries.find(item => item.title === target);
+  if (exact) return exact.code;
+  const partial = entries.find(item => item.title && (item.title.includes(target) || target.includes(item.title)));
+  return partial?.code || "";
+}
+
+async function buildDraftFromHhVacancy(vacancy) {
+  const sourceText = hhVacancySourceText(vacancy);
+  try {
+    return normalizeVacancyDraft(await callVacancyDraftAi(sourceText), sourceText);
+  } catch (error) {
+    return normalizeVacancyDraft({ ...localVacancyDraft(sourceText), title: vacancy.name || localVacancyDraft(sourceText).title, mode: "local", aiError: error.message }, sourceText);
+  }
+}
+
+async function fetchHhVacancyDetails(hhVacancyId) {
+  return hhApi(`/vacancies/${encodeURIComponent(hhVacancyId)}`);
+}
+
+async function importHhActiveVacancies({ user = null } = {}) {
+  const account = await refreshHhAccountIfNeeded();
+  if (!account?.accessToken) throw new Error("HeadHunter не подключен.");
+  const me = await hhApi("/me").catch(() => null);
+  const employerId = me?.employer?.id
+    || me?.employers?.[0]?.id
+    || me?.manager?.employer?.id
+    || me?.manager?.employer_id
+    || hhEmployerIdFromAccount(account);
+  if (!employerId) throw new Error("Не удалось определить работодателя HeadHunter.");
+
+  const activeVacancies = await listAllHhActiveVacancies(employerId);
+  const config = getQuestionnaireConfig();
+  const nextConfig = cloneJson(config);
+  const rootVacancy = cloneJson(nextConfig);
+  delete rootVacancy.vacancies;
+  nextConfig.vacancies = nextConfig.vacancies ? { ...nextConfig.vacancies } : { [nextConfig.vacancyCode || "smm"]: rootVacancy };
+
+  const existingPublications = listHhPublications();
+  const existingCodes = new Set(vacancyCodes(nextConfig));
+  const created = [];
+  const linked = [];
+  const attached = [];
+  const skipped = [];
+  const failed = [];
+
+  for (const item of activeVacancies) {
+    const hhVacancyId = String(item.id || "").trim();
+    if (!hhVacancyId) continue;
+    const existing = existingPublications.find(publication => String(publication.hhVacancyId || "") === hhVacancyId);
+    if (existing) {
+      linked.push({ hhVacancyId, vacancyCode: existing.vacancyCode, title: item.name || "" });
+      continue;
+    }
+    try {
+      const details = await fetchHhVacancyDetails(hhVacancyId).catch(() => item);
+      const matchedVacancyCode = findExistingVacancyCodeByTitle(details.name || item.name || "", nextConfig);
+      if (matchedVacancyCode) {
+        let opening = createVacancyOpening({
+          vacancyCode: matchedVacancyCode,
+          title: vacancyLabelFromConfig(matchedVacancyCode, nextConfig),
+          hrOwnerUserId: user?.role === "hr" ? user.userId : null,
+          hrOwnerUsername: user?.role === "hr" ? user.username : "",
+          reason: "Связана существующая вакансия HeadHunter",
+          status: "published",
+          payload: {
+            recruitmentChannels: ["hh"],
+            importedFromHeadHunter: true,
+            matchedExistingVacancy: true,
+            hhVacancyId,
+            hhUrl: details.alternate_url || item.alternate_url || "",
+            source: "headhunter_import"
+          }
+        });
+        const text = createHhVacancyText({
+          vacancyCode: matchedVacancyCode,
+          openingId: opening.id,
+          title: details.name || vacancyLabelFromConfig(matchedVacancyCode, nextConfig),
+          body: htmlToPlainText(details.description || "") || buildHeadHunterDraft(matchedVacancyCode, opening),
+          status: "imported",
+          payload: { source: "headhunter_import", hhVacancyId, matchedExistingVacancy: true }
+        });
+        const publication = createHhPublication({
+          vacancyCode: matchedVacancyCode,
+          openingId: opening.id,
+          hhTextId: text.id,
+          hhVacancyId,
+          url: details.alternate_url || item.alternate_url || "",
+          status: "published",
+          publishedAt: details.published_at || details.created_at || item.published_at || item.created_at || null,
+          payload: {
+            source: "headhunter_import",
+            importMode: "read_only",
+            matchedExistingVacancy: true,
+            note: "Подключена к существующей вакансии платформы без обратной записи на HeadHunter",
+            hhMetrics: normalizeHhVacancyMetrics(details),
+            hhPromotion: normalizeHhPromotionStatus(item)
+          }
+        });
+        opening = updateVacancyOpening(opening.id, { hhTextId: text.id, hhPublicationId: publication.id, status: "active" }) || opening;
+        attached.push({ vacancyCode: matchedVacancyCode, hhVacancyId, title: details.name || item.name || "", openingId: opening.id, publicationId: publication.id });
+        continue;
+      }
+      const draft = await buildDraftFromHhVacancy(details);
+      draft.title = cleanText(details.name || draft.title, 120) || draft.title;
+      draft.adminTitle = cleanText(details.name || draft.adminTitle || draft.title, 40) || draft.adminTitle;
+      const vacancyCode = safeHhVacancyCode(details, [...existingCodes]);
+      existingCodes.add(vacancyCode);
+      const sourceText = hhVacancySourceText(details);
+      const generatedConfig = buildGeneratedVacancyConfig(vacancyCode, draft, sourceText);
+      generatedConfig.vacancyArtifacts = {
+        ...(generatedConfig.vacancyArtifacts || {}),
+        source: "headhunter_import",
+        headHunter: {
+          id: hhVacancyId,
+          url: details.alternate_url || item.alternate_url || "",
+          importedAt: new Date().toISOString(),
+          status: details.archived ? "archived" : "active",
+          area: details.area?.name || "",
+          employer: details.employer?.name || ""
+        }
+      };
+      nextConfig.vacancies[vacancyCode] = generatedConfig;
+
+      let opening = createVacancyOpening({
+        vacancyCode,
+        title: draft.title,
+        hrOwnerUserId: user?.role === "hr" ? user.userId : null,
+        hrOwnerUsername: user?.role === "hr" ? user.username : "",
+        reason: "Импорт активной вакансии из HeadHunter",
+        status: "published",
+        payload: {
+          recruitmentChannels: ["hh"],
+          importedFromHeadHunter: true,
+          hhVacancyId,
+          hhUrl: details.alternate_url || item.alternate_url || "",
+          source: "headhunter_import"
+        }
+      });
+      const text = createHhVacancyText({
+        vacancyCode,
+        openingId: opening.id,
+        title: draft.title,
+        body: draft.hhText || buildHeadHunterDraft(vacancyCode, opening),
+        status: "imported",
+        payload: { source: "headhunter_import", hhVacancyId }
+      });
+      const publication = createHhPublication({
+        vacancyCode,
+        openingId: opening.id,
+        hhTextId: text.id,
+        hhVacancyId,
+        url: details.alternate_url || item.alternate_url || "",
+        status: "published",
+        publishedAt: details.published_at || details.created_at || item.published_at || item.created_at || null,
+        payload: {
+          source: "headhunter_import",
+          importMode: "read_only",
+          note: "Импортировано из активных вакансий HeadHunter без обратной записи",
+          hhMetrics: normalizeHhVacancyMetrics(details),
+          hhPromotion: normalizeHhPromotionStatus(item)
+        }
+      });
+      opening = updateVacancyOpening(opening.id, { hhTextId: text.id, hhPublicationId: publication.id, status: "active" }) || opening;
+      created.push({ vacancyCode, hhVacancyId, title: draft.title, openingId: opening.id, publicationId: publication.id });
+    } catch (error) {
+      failed.push({ hhVacancyId, title: item.name || "", error: error.message || String(error) });
+    }
+  }
+
+  if (created.length) {
+    nextConfig.version = Number(nextConfig.version || 1) + 1;
+    saveQuestionnaireConfig(nextConfig);
+  }
+
+  return {
+    employer: { id: String(employerId), name: me?.employer?.name || account.me?.employer?.name || "" },
+    fetched: activeVacancies.length,
+    created,
+    linked,
+    attached,
+    skipped,
+    failed,
+    configUpdated: created.length > 0,
+    importedAt: new Date().toISOString()
+  };
+}
+
+let hhVacancyImportInProgress = false;
+
+async function runScheduledHhVacancyImport() {
+  if (HH_VACANCY_AUTO_IMPORT_DISABLED || hhVacancyImportInProgress) return;
+  const account = getHhIntegrationAccount();
+  if (!account?.accessToken) return;
+  hhVacancyImportInProgress = true;
+  try {
+    const result = await importHhActiveVacancies({ user: null });
+    if (result.created.length || result.attached.length || result.failed.length) {
+      insertAuditLog({
+        user: null,
+        action: "hh.vacancies.scheduled_import",
+        targetType: "integration",
+        targetId: "headhunter",
+        payload: {
+          fetched: result.fetched,
+          created: result.created.length,
+          attached: result.attached.length,
+          linked: result.linked.length,
+          failed: result.failed.length
+        }
+      });
+      console.log(`HeadHunter vacancy import: fetched=${result.fetched}, created=${result.created.length}, attached=${result.attached.length}, linked=${result.linked.length}, failed=${result.failed.length}`);
+    }
+  } catch (error) {
+    console.error("HeadHunter vacancy import failed:", error.message || error);
+  } finally {
+    hhVacancyImportInProgress = false;
+  }
+}
+
 async function syncHhPublicationMetrics(publication) {
   if (!publication?.hhVacancyId) return publication;
   try {
@@ -2957,6 +3382,38 @@ async function handleApi(req, res) {
     });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/admin/hh/promotion-status") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Статус оплат HeadHunter доступен HR или владельцу." });
+    try {
+      return sendJson(res, 200, await getHhPromotionStatus());
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message || "Не удалось получить статус оплат HeadHunter." });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/hh/import-active-vacancies") {
+    if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Импорт вакансий HeadHunter доступен HR или владельцу." });
+    try {
+      const result = await importHhActiveVacancies({ user: adminSession });
+      insertAuditLog({
+        user: adminSession,
+        action: "hh.vacancies.import_active",
+        targetType: "integration",
+        targetId: "headhunter",
+        payload: {
+          fetched: result.fetched,
+          created: result.created.length,
+          attached: result.attached.length,
+          linked: result.linked.length,
+          failed: result.failed.length
+        }
+      });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message || "Не удалось импортировать активные вакансии HeadHunter." });
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/api/admin/bitrix/notifications") {
     if (!(adminSession.role === "owner" || adminSession.role === "hr")) return sendJson(res, 403, { error: "Нет доступа к настройкам уведомлений." });
     return sendJson(res, 200, { settings: publicBitrixNotificationStatus() });
@@ -3234,5 +3691,9 @@ initDb({
   server.listen(PORT, () => {
     console.log(`HR SMM Screening app: http://localhost:${PORT}`);
     console.log(`Admin login: ${ADMIN_USERNAME}`);
+    if (!HH_VACANCY_AUTO_IMPORT_DISABLED && HH_VACANCY_IMPORT_INTERVAL_MS > 0) {
+      setTimeout(runScheduledHhVacancyImport, 15000);
+      setInterval(runScheduledHhVacancyImport, HH_VACANCY_IMPORT_INTERVAL_MS);
+    }
   });
 });

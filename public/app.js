@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-04";
+const APP_CLIENT_VERSION = "2026-06-26-06";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -278,6 +278,9 @@ const state = {
     hhVacancyId: ""
   },
   hhStatus: null,
+  hhPromotionStatus: null,
+  hhImporting: false,
+  hhImportResult: null,
   hhResponses: [],
   bitrixNotifications: null,
   bitrixNotificationDraft: null,
@@ -1334,6 +1337,7 @@ async function loadAdmin() {
     fetch("/api/admin/hh-texts"),
     fetch("/api/admin/hh-publications"),
     fetch("/api/admin/hh/status"),
+    fetch("/api/admin/hh/promotion-status"),
     fetch("/api/admin/hh/responses"),
     fetch("/api/admin/bitrix/notifications")
   ];
@@ -1341,7 +1345,7 @@ async function loadAdmin() {
     requests.push(fetch("/api/admin/users"));
     requests.push(fetch("/api/admin/audit"));
   }
-  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhResponsesResponse, bitrixNotificationsResponse, usersResponse, auditResponse] = await Promise.all(requests);
+  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhPromotionStatusResponse, hhResponsesResponse, bitrixNotificationsResponse, usersResponse, auditResponse] = await Promise.all(requests);
   if (subs.status === 401 || analytics.status === 401) return false;
   if (subs.status === 403 || analytics.status === 403) {
     showToast("У вашей учетной записи нет доступа к этой вакансии.");
@@ -1372,6 +1376,11 @@ async function loadAdmin() {
   if (hhTextsResponse?.ok) state.hhTexts = (await hhTextsResponse.json()).texts;
   if (hhPublicationsResponse?.ok) state.hhPublications = (await hhPublicationsResponse.json()).publications;
   if (hhStatusResponse?.ok) state.hhStatus = await hhStatusResponse.json();
+  if (hhPromotionStatusResponse?.ok) {
+    state.hhPromotionStatus = await hhPromotionStatusResponse.json();
+  } else if (hhPromotionStatusResponse) {
+    state.hhPromotionStatus = await hhPromotionStatusResponse.json().catch(() => ({ error: "Не удалось получить статус оплат HeadHunter." }));
+  }
   if (hhResponsesResponse?.ok) state.hhResponses = (await hhResponsesResponse.json()).responses;
   if (bitrixNotificationsResponse?.ok) {
     const data = await bitrixNotificationsResponse.json();
@@ -3486,6 +3495,28 @@ async function setupHhWebhook() {
   render();
 }
 
+async function importActiveHhVacancies() {
+  if (state.hhImporting) return;
+  state.hhImporting = true;
+  state.hhImportResult = null;
+  render();
+  const response = await fetch("/api/admin/hh/import-active-vacancies", { method: "POST" });
+  state.hhImporting = false;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось загрузить вакансии HeadHunter." }));
+    state.hhImportResult = { error: error.error || "Не удалось загрузить вакансии HeadHunter." };
+    showToast(state.hhImportResult.error);
+    render();
+    return;
+  }
+  const data = await response.json();
+  state.hhImportResult = data;
+  await loadAdmin();
+  state.hhImportResult = data;
+  showToast(`Загрузка завершена: создано ${data.created?.length || 0}, связано с готовыми вакансиями ${data.attached?.length || 0}.`);
+  render();
+}
+
 async function syncHhResponses(publication) {
   const response = await fetch(`/api/admin/hh/publications/${publication.id}/sync-responses`, { method: "POST" });
   if (!response.ok) {
@@ -3806,6 +3837,92 @@ function telegramDraftCard(title, text, toast) {
   ]);
 }
 
+function hhPromotionStatusText(item) {
+  if (!item) return "данных пока нет";
+  return item.promoted ? item.promotionLabel : "без платного продвижения";
+}
+
+function hhPromotionStatusPanel() {
+  const data = state.hhPromotionStatus;
+  if (!data) {
+    return el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Оплата и продвижение HeadHunter"]),
+        el("span", {}, ["Данные загружаются."])
+      ])
+    ]);
+  }
+  if (data.error) {
+    return el("section", { class: "table-panel" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Оплата и продвижение HeadHunter"]),
+        el("span", {}, ["Не удалось получить данные."])
+      ]),
+      el("div", { class: "empty" }, [data.error])
+    ]);
+  }
+  const accountPayment = data.accountPayment || {};
+  const available = accountPayment.availablePublications || [];
+  const vacancies = data.vacancies || [];
+  return el("section", { class: "table-panel hh-promotion-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("h2", {}, ["Оплата и продвижение HeadHunter"]),
+      el("span", {}, [data.fetchedAt ? `Обновлено: ${formatDateTime(data.fetchedAt)}` : ""])
+    ]),
+    el("div", { class: "hh-payment-summary" }, [
+      el("div", {}, [
+        el("strong", {}, [accountPayment.hasAvailablePublications ? "Есть оплаченные публикации" : "Оплаченных публикаций нет"]),
+        el("span", {}, [`Доступно всего: ${accountPayment.availableTotal || 0}`])
+      ]),
+      el("div", {}, [
+        el("strong", {}, [accountPayment.payableActionsCount ? "Есть активные оплачиваемые действия" : "Активных оплачиваемых действий нет"]),
+        el("span", {}, [`Действий: ${accountPayment.payableActionsCount || 0}`])
+      ])
+    ]),
+    available.length ? el("div", { class: "hh-payment-variants" }, available.map(item => el("div", { class: "hh-payment-variant" }, [
+      el("strong", {}, [item.title]),
+      el("span", {}, [`Доступно: ${item.count}`]),
+      item.description ? el("em", {}, [item.description]) : el("em")
+    ]))) : el("div", { class: "empty" }, ["HeadHunter не вернул список доступных публикаций."]),
+    el("div", { class: "panel-head compact-head" }, [
+      el("h3", {}, ["Статус по активным вакансиям"]),
+      el("span", {}, [`Всего: ${vacancies.length}`])
+    ]),
+    vacancies.length ? el("div", { class: "hh-promotion-list" }, vacancies.map(item => {
+      const promotion = item.promotion || {};
+      return el("div", { class: `hh-promotion-row ${promotion.promoted ? "promoted" : ""}` }, [
+        el("div", {}, [
+          el("strong", {}, [item.name || `Вакансия ${item.id}`]),
+          el("span", {}, [item.url || item.id])
+        ]),
+        el("div", {}, [
+          el("span", {}, ["Тип размещения"]),
+          el("strong", {}, [promotion.publicationType || item.billingType || "не определен"])
+        ]),
+        el("div", {}, [
+          el("span", {}, ["Продвижение"]),
+          el("strong", {}, [hhPromotionStatusText(promotion)])
+        ]),
+        el("div", {}, [
+          el("span", {}, ["Срок"]),
+          el("strong", {}, [promotion.endAt ? formatDateTime(promotion.endAt) : (item.expiresAt ? formatDateTime(item.expiresAt) : "не указан")])
+        ])
+      ]);
+    })) : el("div", { class: "empty" }, ["Активных вакансий HeadHunter не найдено."])
+  ]);
+}
+
+function hhImportResultPanel() {
+  const result = state.hhImportResult;
+  if (!result) return el("div");
+  if (result.error) {
+    return el("div", { class: "empty danger-note" }, [result.error]);
+  }
+  return el("div", { class: "empty success-note" }, [
+    `Загрузка активных вакансий HeadHunter завершена. Найдено: ${result.fetched || 0}. Новых вакансий создано: ${result.created?.length || 0}. Связано с готовыми вакансиями: ${result.attached?.length || 0}. Уже было связано раньше: ${result.linked?.length || 0}. Ошибок: ${result.failed?.length || 0}.`
+  ]);
+}
+
 function headHunterDashboardView() {
   const status = state.hhStatus || { configured: false, account: { connected: false } };
   const connected = Boolean(status.account?.connected);
@@ -3817,8 +3934,13 @@ function headHunterDashboardView() {
         el("h1", {}, ["Тексты и публикации"]),
         el("p", {}, ["Здесь готовим текст вакансии, связываем публикацию на HH с нашей воронкой, загружаем отклики и отправляем кандидатам ссылку на анкету."])
       ]),
-      isHrOrOwner() ? el("button", { class: "btn primary", onclick: connectHeadHunter }, [
-        connected ? "Переподключить HeadHunter" : "Подключить HeadHunter"
+      isHrOrOwner() ? el("div", { class: "admin-form-actions inline-actions" }, [
+        el("button", { class: "btn ghost", onclick: importActiveHhVacancies, disabled: connected && !state.hhImporting ? null : "disabled" }, [
+          state.hhImporting ? "Загружаем..." : "Загрузить вакансии"
+        ]),
+        el("button", { class: "btn primary", onclick: connectHeadHunter }, [
+          connected ? "Переподключить HeadHunter" : "Подключить HeadHunter"
+        ])
       ]) : el("div")
     ]),
     el("section", { class: "table-panel" }, [
@@ -3853,8 +3975,10 @@ function headHunterDashboardView() {
         connected
           ? "Следующий шаг: вставьте ссылку на опубликованную вакансию HH в публикации ниже и нажмите “Синхронизировать отклики”."
           : "Следующий шаг: нажмите “Подключить HeadHunter”, авторизуйтесь в кабинете работодателя и вернитесь в этот раздел."
-      ])
+      ]),
+      hhImportResultPanel()
     ]),
+    hhPromotionStatusPanel(),
     el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [
         el("h2", {}, ["Связать вакансию HeadHunter с воронкой"]),
