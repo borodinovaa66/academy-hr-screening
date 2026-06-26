@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-03";
+const APP_CLIENT_VERSION = "2026-06-26-04";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -3857,12 +3857,12 @@ function headHunterDashboardView() {
     ]),
     el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [
-        el("h2", {}, ["Подцепить существующую вакансию HH"]),
-        el("span", {}, ["Для вакансий, которые уже созданы на HeadHunter вручную."])
+        el("h2", {}, ["Связать вакансию HeadHunter с воронкой"]),
+        el("span", {}, ["Для вакансий, которые уже опубликованы на HeadHunter вручную."])
       ]),
       el("div", { class: "staff-form-grid" }, [
         el("label", { class: "named-input" }, [
-          el("span", {}, ["Вакансия на нашей платформе"]),
+          el("span", {}, ["К какой воронке привязать"]),
           el("select", {
             class: "input compact-input",
             value: state.hhExistingPublicationForm.vacancyCode,
@@ -3872,10 +3872,11 @@ function headHunterDashboardView() {
           }, [
             el("option", { value: "" }, ["Выберите вакансию"]),
             ...vacancyOptions(state.hhExistingPublicationForm.vacancyCode)
-          ])
+          ]),
+          el("small", { class: "field-hint" }, ["Отклики с HeadHunter попадут в выбранную воронку и будут связаны с ее анкетой."])
         ]),
         el("label", { class: "named-input" }, [
-          el("span", {}, ["Ссылка на вакансию HeadHunter"]),
+          el("span", {}, ["Опубликованная вакансия HeadHunter"]),
           el("input", {
             class: "input compact-input",
             value: state.hhExistingPublicationForm.url,
@@ -3887,7 +3888,8 @@ function headHunterDashboardView() {
               if (extractedId) state.hhExistingPublicationForm.hhVacancyId = extractedId;
               render();
             }
-          })
+          }),
+          el("small", { class: "field-hint" }, ["Вставьте ссылку на уже опубликованную вакансию. ID заполнится ниже автоматически."])
         ]),
         el("label", { class: "named-input" }, [
           el("span", {}, ["ID вакансии HeadHunter"]),
@@ -3898,11 +3900,14 @@ function headHunterDashboardView() {
             oninput: event => {
               state.hhExistingPublicationForm.hhVacancyId = event.target.value;
             }
-          })
+          }),
+          el("small", { class: "field-hint" }, ["Нужен системе для синхронизации откликов. Обычно заполняется из ссылки."])
         ])
       ]),
-      isHrOrOwner() ? el("button", { class: "btn primary", onclick: attachExistingHhVacancy }, [
-        "Подцепить вакансию и загрузить отклики"
+      isHrOrOwner() ? el("div", { class: "admin-form-actions" }, [
+        el("button", { class: "btn primary", onclick: attachExistingHhVacancy }, [
+          "Связать и загрузить отклики"
+        ])
       ]) : el("div")
     ]),
     el("section", { class: "table-panel" }, [
