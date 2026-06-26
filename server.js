@@ -1788,6 +1788,123 @@ function findExistingVacancyCodeByTitle(title, config = getQuestionnaireConfig()
   return partial?.code || "";
 }
 
+function titleTokensForDuplicateAnalysis(value = "") {
+  return normalizeVacancyTitleForMatch(value)
+    .split(/\s+/)
+    .map(token => token
+      .replace(/^smm$/i, "соцсети")
+      .replace(/^смм$/i, "соцсети")
+      .replace(/^project$/i, "проект")
+      .replace(/^проджект$/i, "проект")
+      .replace(/^projects$/i, "проект"))
+    .filter(token => token && token.length > 1);
+}
+
+function titleSimilarityScore(first = "", second = "") {
+  const a = new Set(titleTokensForDuplicateAnalysis(first));
+  const b = new Set(titleTokensForDuplicateAnalysis(second));
+  if (!a.size || !b.size) return 0;
+  const intersection = [...a].filter(token => b.has(token)).length;
+  const smaller = Math.min(a.size, b.size);
+  const larger = Math.max(a.size, b.size);
+  return Math.max(intersection / smaller, intersection / larger);
+}
+
+function findVacancyDuplicateGroups(session) {
+  const config = getQuestionnaireConfig();
+  const visible = visibleVacancies(session, config);
+  const submissions = listSubmissions();
+  const publications = listHhPublications();
+  const responses = listHhResponses();
+  const openings = listVacancyOpenings();
+  const records = Object.entries(visible).map(([code, vacancy]) => {
+    const title = vacancy.adminTitle || vacancy.title || vacancy.publicTitle || code;
+    const vacancySubmissions = submissions.filter(item => item.vacancyCode === code);
+    const vacancyPublications = publications.filter(item => item.vacancyCode === code);
+    const vacancyResponses = responses.filter(item => item.vacancyCode === code);
+    const vacancyOpenings = openings.filter(item => item.vacancyCode === code);
+    const activeOpenings = vacancyOpenings.filter(item => !["closed", "cancelled"].includes(item.status));
+    const hasHeadHunter = vacancyPublications.some(item => item.hhVacancyId);
+    const active = vacancy.active !== false;
+    const score = (
+      vacancySubmissions.length * 4 +
+      vacancyResponses.length * 2 +
+      vacancyPublications.length * 3 +
+      activeOpenings.length * 4 +
+      (hasHeadHunter ? 5 : 0) +
+      (active ? 2 : 0)
+    );
+    return {
+      code,
+      title,
+      normalizedTitle: normalizeVacancyTitleForMatch(title),
+      active,
+      score,
+      stats: {
+        candidates: vacancySubmissions.length,
+        hhResponses: vacancyResponses.length,
+        hhPublications: vacancyPublications.length,
+        activeOpenings: activeOpenings.length,
+        hasHeadHunter
+      }
+    };
+  });
+
+  const visited = new Set();
+  const groups = [];
+  for (const record of records) {
+    if (visited.has(record.code)) continue;
+    const matches = records.filter(candidate => {
+      if (candidate.code === record.code) return true;
+      if (visited.has(candidate.code)) return false;
+      const exact = candidate.normalizedTitle && candidate.normalizedTitle === record.normalizedTitle;
+      const similarity = titleSimilarityScore(record.title, candidate.title);
+      const includes = candidate.normalizedTitle && record.normalizedTitle &&
+        (candidate.normalizedTitle.includes(record.normalizedTitle) || record.normalizedTitle.includes(candidate.normalizedTitle));
+      return exact || similarity >= 0.72 || (includes && similarity >= 0.5);
+    });
+    if (matches.length < 2) continue;
+    matches.forEach(item => visited.add(item.code));
+    const sorted = [...matches].sort((a, b) => b.score - a.score || b.stats.candidates - a.stats.candidates || a.title.localeCompare(b.title, "ru"));
+    const primary = sorted[0];
+    const secondary = sorted.slice(1);
+    const reasons = [];
+    if (secondary.some(item => item.normalizedTitle === primary.normalizedTitle)) reasons.push("названия практически совпадают");
+    if (secondary.some(item => titleSimilarityScore(primary.title, item.title) >= 0.72)) reasons.push("названия и смысл роли очень близкие");
+    if (sorted.reduce((sum, item) => sum + item.stats.hhPublications, 0) > 1) reasons.push("есть несколько связанных публикаций HeadHunter");
+    groups.push({
+      id: sorted.map(item => item.code).sort().join("__"),
+      severity: sorted.length > 2 ? "high" : "medium",
+      primary,
+      duplicates: secondary,
+      all: sorted,
+      summary: `Найдены похожие вакансии: ${sorted.map(item => item.title).join(", ")}.`,
+      conclusion: `Основной лучше считать вакансию "${primary.title}", потому что у нее больше связей с воронкой, кандидатами или публикациями.`,
+      recommendation: secondary.map(item => `Проверить "${item.title}": если это та же роль, перенести нужные связи и оставить одну вакансию "${primary.title}"; если роль отличается, переименовать так, чтобы отличие было понятно.`).join(" ")
+        || `Оставить "${primary.title}" как основную.`,
+      reasons
+    });
+  }
+  return {
+    checkedAt: new Date().toISOString(),
+    totalVacancies: records.length,
+    duplicateGroups: groups,
+    hasDuplicates: groups.length > 0,
+    summary: groups.length
+      ? `Найдено ${groups.length} ${pluralServer(groups.length, "группа возможных дублей", "группы возможных дублей", "групп возможных дублей")}.`
+      : "Явных дублей вакансий не найдено."
+  };
+}
+
+function pluralServer(number, one, few, many) {
+  const n = Math.abs(Number(number || 0)) % 100;
+  const n1 = n % 10;
+  if (n > 10 && n < 20) return many;
+  if (n1 > 1 && n1 < 5) return few;
+  if (n1 === 1) return one;
+  return many;
+}
+
 async function buildDraftFromHhVacancy(vacancy) {
   const sourceText = hhVacancySourceText(vacancy);
   try {
@@ -3187,6 +3304,10 @@ async function handleApi(req, res) {
         vacancies: Object.fromEntries(Object.keys(visible).map(code => [code, config.vacancies?.[code]]).filter(([, value]) => Boolean(value)))
       };
     return sendJson(res, 200, { config: visibleConfig, vacancies: visible });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/vacancy-duplicate-analysis") {
+    return sendJson(res, 200, findVacancyDuplicateGroups(adminSession));
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/vacancy-draft") {

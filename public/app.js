@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-08";
+const APP_CLIENT_VERSION = "2026-06-26-09";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -281,6 +281,7 @@ const state = {
   hhPromotionStatus: null,
   hhImporting: false,
   hhImportResult: null,
+  vacancyDuplicateAnalysis: null,
   hhResponses: [],
   bitrixNotifications: null,
   bitrixNotificationDraft: null,
@@ -1339,13 +1340,14 @@ async function loadAdmin() {
     fetch("/api/admin/hh/status"),
     fetch("/api/admin/hh/promotion-status"),
     fetch("/api/admin/hh/responses"),
+    fetch("/api/admin/vacancy-duplicate-analysis"),
     fetch("/api/admin/bitrix/notifications")
   ];
   if (isOwner()) {
     requests.push(fetch("/api/admin/users"));
     requests.push(fetch("/api/admin/audit"));
   }
-  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhPromotionStatusResponse, hhResponsesResponse, bitrixNotificationsResponse, usersResponse, auditResponse] = await Promise.all(requests);
+  const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhPromotionStatusResponse, hhResponsesResponse, vacancyDuplicateAnalysisResponse, bitrixNotificationsResponse, usersResponse, auditResponse] = await Promise.all(requests);
   if (subs.status === 401 || analytics.status === 401) return false;
   if (subs.status === 403 || analytics.status === 403) {
     showToast("У вашей учетной записи нет доступа к этой вакансии.");
@@ -1382,6 +1384,11 @@ async function loadAdmin() {
     state.hhPromotionStatus = await hhPromotionStatusResponse.json().catch(() => ({ error: "Не удалось получить статус оплат HeadHunter." }));
   }
   if (hhResponsesResponse?.ok) state.hhResponses = (await hhResponsesResponse.json()).responses;
+  if (vacancyDuplicateAnalysisResponse?.ok) {
+    state.vacancyDuplicateAnalysis = await vacancyDuplicateAnalysisResponse.json();
+  } else if (vacancyDuplicateAnalysisResponse) {
+    state.vacancyDuplicateAnalysis = await vacancyDuplicateAnalysisResponse.json().catch(() => ({ error: "Не удалось выполнить анализ дублей вакансий." }));
+  }
   if (bitrixNotificationsResponse?.ok) {
     const data = await bitrixNotificationsResponse.json();
     state.bitrixNotifications = data.settings;
@@ -1629,6 +1636,87 @@ function overviewVacancyCard(code, vacancy) {
   ]);
 }
 
+function duplicateStatsText(item) {
+  const stats = item.stats || {};
+  return [
+    `${stats.candidates || 0} ${pluralRu(stats.candidates || 0, "кандидат", "кандидата", "кандидатов")}`,
+    `${stats.hhResponses || 0} ${pluralRu(stats.hhResponses || 0, "отклик", "отклика", "откликов")}`,
+    `${stats.hhPublications || 0} ${pluralRu(stats.hhPublications || 0, "публикация", "публикации", "публикаций")}`,
+    `${stats.activeOpenings || 0} ${pluralRu(stats.activeOpenings || 0, "активный подбор", "активных подбора", "активных подборов")}`
+  ].join(" · ");
+}
+
+function openVacancyFromDuplicateAnalysis(code) {
+  state.adminSection = "vacancies";
+  state.adminVacancyCode = code;
+  history.replaceState(null, "", `#admin/${code}`);
+  state.selected = null;
+  state.aiInsights = null;
+  state.config = null;
+  state.questionnaireDraft = null;
+  state.questionnaireDraftVacancyCode = "";
+  state.loading = true;
+  render();
+  loadAdmin().then(() => {
+    state.loading = false;
+    render();
+  });
+}
+
+function duplicateVacancyMiniCard(item, primaryCode) {
+  const isPrimary = item.code === primaryCode;
+  return el("div", { class: `duplicate-vacancy-card ${isPrimary ? "primary" : ""}` }, [
+    el("div", {}, [
+      el("span", { class: "duplicate-label" }, [isPrimary ? "Рекомендуем оставить основной" : "Возможный дубль"]),
+      el("strong", {}, [item.title || vacancyLabel(item.code)]),
+      el("em", {}, [duplicateStatsText(item)])
+    ]),
+    el("button", { class: "btn ghost", onclick: () => openVacancyFromDuplicateAnalysis(item.code) }, ["Открыть"])
+  ]);
+}
+
+function vacancyDuplicateAnalysisPanel() {
+  const analysis = state.vacancyDuplicateAnalysis;
+  if (!analysis) return el("div");
+  if (analysis.error) {
+    return el("section", { class: "overview-section duplicate-analysis danger" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Дубли вакансий"]),
+        el("span", {}, ["Проверка не выполнена"])
+      ]),
+      el("div", { class: "empty danger-note" }, [analysis.error])
+    ]);
+  }
+  const groups = analysis.duplicateGroups || [];
+  return el("section", { class: `overview-section duplicate-analysis ${groups.length ? "warning" : "ok"}` }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Дубли вакансий"]),
+        el("span", {}, [analysis.checkedAt ? `Проверено: ${formatDateTime(analysis.checkedAt)}` : ""])
+      ]),
+      el("span", {}, [groups.length ? `Найдено групп: ${groups.length}` : "Дублей не найдено"])
+    ]),
+    groups.length
+      ? el("div", { class: "duplicate-group-list" }, groups.map(group => el("div", { class: "duplicate-group" }, [
+        el("div", { class: "duplicate-summary" }, [
+          el("strong", {}, [group.summary || "Похожие вакансии"]),
+          group.reasons?.length ? el("span", {}, [`Почему подсвечено: ${group.reasons.join(", ")}.`]) : el("span", {}, ["Почему подсвечено: названия и контекст похожи."])
+        ]),
+        el("div", { class: "duplicate-card-grid" }, (group.all || []).map(item => duplicateVacancyMiniCard(item, group.primary?.code))),
+        el("div", { class: "duplicate-conclusion" }, [
+          el("strong", {}, ["Заключение"]),
+          el("p", {}, [group.conclusion || "Проверьте, не описывает ли группа одну и ту же роль."]),
+          el("strong", {}, ["Что сделать"]),
+          el("p", {}, [group.recommendation || "Оставить одну основную вакансию, вторую объединить или переименовать, если это другая роль."])
+        ])
+      ])))
+      : el("div", { class: "duplicate-ok-note" }, [
+        el("strong", {}, ["Все нормально"]),
+        el("p", {}, [`Проверено вакансий: ${analysis.totalVacancies || 0}. Явных дублей по названию, связям с HeadHunter и активности воронок не найдено.`])
+      ])
+  ]);
+}
+
 function adminOverviewView() {
   const vacancies = Object.entries(state.vacancies || {});
   const activeVacancies = vacancies.filter(([, vacancy]) => vacancy.active !== false).length;
@@ -1658,6 +1746,7 @@ function adminOverviewView() {
       ]),
       vacancies.length ? el("div", { class: "overview-vacancy-grid" }, vacancies.map(([code, vacancy]) => overviewVacancyCard(code, vacancy))) : el("div", { class: "empty" }, ["Пока нет заведенных вакансий."])
     ]),
+    vacancyDuplicateAnalysisPanel(),
     el("section", { class: "overview-section overview-guide" }, [
       el("div", {}, [
         el("h2", {}, ["Как работать с системой"]),
