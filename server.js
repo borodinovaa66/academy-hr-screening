@@ -2414,6 +2414,88 @@ function normalizeScore(value) {
   return Math.max(0, Math.min(100, score));
 }
 
+function textHasAny(text, patterns = []) {
+  const source = String(text || "").toLowerCase();
+  return patterns.some(pattern => pattern.test(source));
+}
+
+function buildResumeReview(item, config = {}) {
+  const answers = item.answers || {};
+  const resumeText = [
+    answers.portfolio,
+    answers.resumeFile?.url,
+    answers.resumeFile?.originalName,
+    item.candidate?.portfolio,
+    item.candidate?.resumeFile?.originalName
+  ].filter(Boolean).join(" ");
+  const projectTypes = Array.isArray(answers.projectTypes) ? answers.projectTypes : [];
+  const responsibilities = Array.isArray(answers.responsibilities) ? answers.responsibilities : [];
+  const metrics = Array.isArray(answers.metrics) ? answers.metrics : [];
+  const hasResume = Boolean(String(answers.portfolio || "").trim() || answers.resumeFile?.url);
+  const hasOnlineSignal = textHasAny(resumeText, [
+    /онлайн/i,
+    /online/i,
+    /edtech/i,
+    /онлайн[\s-]?школ/i,
+    /курс/i,
+    /telegram/i,
+    /телеграм/i,
+    /instagram/i,
+    /соцсет/i,
+    /воронк/i,
+    /запуск/i
+  ]) || projectTypes.some(value => ["education", "expert", "b2b", "personalBrand", "ecommerce"].includes(value));
+  const hasRelevantProjects = projectTypes.some(value => ["education", "expert", "b2b", "consulting", "premium", "personalBrand"].includes(value));
+  const hasAnalytics = metrics.some(value => ["leads", "ctrUtm", "leadQuality", "clicks", "follows"].includes(value));
+  const hasExecution = responsibilities.some(value => ["expertContent", "analyticsReports", "leadgen", "growth", "contentPlanning"].includes(value));
+  const risks = [];
+  const signals = [];
+  let score = 20;
+  if (hasResume) {
+    score += 20;
+    signals.push("есть резюме, портфолио или ссылка для проверки опыта");
+  } else {
+    risks.push("нет резюме или ссылки, опыт нельзя быстро проверить");
+  }
+  if (hasOnlineSignal) {
+    score += 25;
+    signals.push("есть признаки опыта в онлайн-проектах, экспертных продуктах, каналах или запусках");
+  } else {
+    risks.push("не видно явного опыта в онлайн-проектах или образовательной среде");
+  }
+  if (hasRelevantProjects) {
+    score += 20;
+    signals.push("тип проектов близок к текущей роли");
+  } else {
+    risks.push("тип проектов может быть далек от нужного формата");
+  }
+  if (hasAnalytics) {
+    score += 15;
+    signals.push("есть признаки работы с метриками, заявками или воронкой");
+  }
+  if (hasExecution) {
+    score += 10;
+    signals.push("есть признаки самостоятельной зоны ответственности");
+  }
+  score = normalizeScore(score);
+  const questionnaireScore = Number(item.score?.total || 0);
+  const hiddenPotential = score >= 70 && questionnaireScore < 65;
+  return {
+    score,
+    status: score >= 75 ? "сильное резюме" : score >= 55 ? "нужна ручная проверка" : "слабое подтверждение опыта",
+    hiddenPotential,
+    signals,
+    risks,
+    explanation: hiddenPotential
+      ? "Резюме выглядит сильнее анкеты: кандидата лучше не отклонять автоматически, а проверить коротким созвоном."
+      : score >= 75
+        ? "Резюме подтверждает релевантность опыта и усиливает оценку кандидата."
+        : score >= 55
+          ? "В резюме есть полезные сигналы, но их нужно подтвердить вручную."
+          : "По доступным данным резюме не подтверждает достаточную релевантность."
+  };
+}
+
 function buildTestAssignmentReview(testAssignment = {}) {
   const aiEvaluation = testAssignment.evaluation || null;
   const manualReview = testAssignment.manualReview || null;
@@ -2463,39 +2545,61 @@ function buildTestAssignmentReview(testAssignment = {}) {
 
 function buildCandidateFunnelReview(item) {
   const questionnaireScore = Number(item.score?.total || 0);
+  const resumeReview = buildResumeReview(item);
+  const resumeScore = resumeReview.score;
   const testReview = buildTestAssignmentReview(item.testAssignment || {});
   const hasAssignedTest = Boolean(item.testAssignment?.eligible);
   const hasTestEvaluation = testReview.finalScore !== null;
+  const testRefused = item.testAssignment?.status === "refused";
   const testScore = hasTestEvaluation ? testReview.finalScore : 0;
   const interviewScore = Number(item.interview?.evaluation?.score || 0);
   const hasInterviewEvaluation = Number.isFinite(interviewScore) && item.interview?.evaluation;
-  const waitingForTestEvaluation = hasAssignedTest && !hasTestEvaluation && !hasInterviewEvaluation;
+  const waitingForTestEvaluation = hasAssignedTest && !hasTestEvaluation && !hasInterviewEvaluation && !testRefused;
   const totalScore = hasTestEvaluation && hasInterviewEvaluation
-    ? Math.round(questionnaireScore * 0.35 + testScore * 0.30 + interviewScore * 0.35)
+    ? Math.round(resumeScore * 0.20 + questionnaireScore * 0.25 + testScore * 0.25 + interviewScore * 0.30)
     : hasTestEvaluation
-      ? Math.round(questionnaireScore * 0.6 + testScore * 0.4)
+      ? Math.round(resumeScore * 0.25 + questionnaireScore * 0.35 + testScore * 0.40)
       : hasInterviewEvaluation
-        ? Math.round(questionnaireScore * 0.65 + interviewScore * 0.35)
-        : questionnaireScore;
+        ? Math.round(resumeScore * 0.25 + questionnaireScore * 0.35 + interviewScore * 0.40)
+        : Math.round(resumeScore * 0.50 + questionnaireScore * 0.50);
+  let recommendation = finalRecommendationByScore(
+    totalScore,
+    hasTestEvaluation || hasInterviewEvaluation || resumeReview.hiddenPotential || testRefused,
+    waitingForTestEvaluation,
+    item.recommendation
+  );
+  if (resumeReview.hiddenPotential && !hasTestEvaluation && !hasInterviewEvaluation) {
+    recommendation = {
+      code: "hidden_potential",
+      label: "Скрытый потенциал",
+      status: "резюме сильнее анкеты",
+      action: "Не отклонять автоматически. Назначить короткий созвон и проверить реальный опыт."
+    };
+  } else if (testRefused) {
+    recommendation = {
+      code: "yellow",
+      label: "Отказ от тестового",
+      status: "кандидат явно отказался выполнять задание",
+      action: "Посмотреть причину отказа. Если резюме сильное, можно предложить короткий созвон; если нет - закрыть кандидата."
+    };
+  }
   return {
+    resumeScore,
+    resumeReview,
     questionnaireScore,
     testScore: hasTestEvaluation ? testScore : null,
     testReview,
     interviewScore: hasInterviewEvaluation ? interviewScore : null,
     totalScore,
     formula: hasTestEvaluation && hasInterviewEvaluation
-      ? "анкета 35% + тестовое 30% + интервью 35%"
+      ? "резюме 20% + анкета 25% + тестовое 25% + интервью 30%"
       : hasTestEvaluation
-        ? "анкета 60% + тестовое 40%"
+        ? "резюме 25% + анкета 35% + тестовое 40%"
         : hasInterviewEvaluation
-        ? "анкета 65% + интервью 35%"
-        : "пока только анкета",
-    recommendation: finalRecommendationByScore(
-      totalScore,
-      hasTestEvaluation || hasInterviewEvaluation,
-      waitingForTestEvaluation,
-      item.recommendation
-    )
+        ? "резюме 25% + анкета 35% + интервью 40%"
+        : "резюме 50% + анкета 50%",
+    explanation: recommendation.action || "",
+    recommendation
   };
 }
 
@@ -2531,6 +2635,7 @@ function requestedVacancyCode(url, fallback = "smm") {
 
 function testAssignmentConfig(config) {
   return {
+    mode: "after_questionnaire",
     threshold: 80,
     enabledStatuses: ["green"],
     ...(config.testAssignment || {})
@@ -2539,6 +2644,7 @@ function testAssignmentConfig(config) {
 
 function isTestAssignmentEligible(record, config) {
   const testConfig = testAssignmentConfig(config);
+  if (testConfig.mode === "after_call" || testConfig.mode === "manual") return false;
   return record.score.total >= Number(testConfig.threshold || 80) &&
     (testConfig.enabledStatuses || ["green"]).includes(record.recommendation.code);
 }
@@ -3167,12 +3273,43 @@ async function handleApi(req, res) {
     return sendJson(res, 200, { ok: true, testAssignment: updated.testAssignment });
   }
 
+  if (req.method === "POST" && parts[0] === "api" && parts[1] === "submissions" && parts[3] === "test-assignment" && parts[4] === "refuse") {
+    const id = parts[2];
+    const payload = await readBody(req);
+    const reason = cleanText(payload.reason, 1200);
+    if (reason.length < 3) return sendJson(res, 400, { error: "Напишите причину отказа хотя бы в двух словах." });
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Submission not found" });
+    if (!record.testAssignment?.eligible) return sendJson(res, 403, { error: "Test assignment is not available for this submission" });
+    const refusedAt = new Date().toISOString();
+    const updated = updateTestAssignment(id, {
+      ...record.testAssignment,
+      status: "refused",
+      refusedAt,
+      refusalReason: reason,
+      issuedAt: record.testAssignment.issuedAt || refusedAt
+    });
+    createCommunication({
+      candidateId: id,
+      vacancyCode: record.vacancyCode,
+      channel: "platform",
+      eventType: "test_assignment_refused",
+      recipient: "platform",
+      subject: "Кандидат отказался от тестового задания",
+      body: reason,
+      status: "received",
+      provider: "platform",
+      payload: { reason }
+    });
+    return sendJson(res, 200, { ok: true, testAssignment: updated.testAssignment });
+  }
+
   if (req.method === "POST" && parts[0] === "api" && parts[1] === "submissions" && parts[3] === "test-assignment" && parts[4] === "viewed") {
     const id = parts[2];
     const record = getSubmission(id);
     if (!record) return sendJson(res, 404, { error: "Submission not found" });
     if (!record.testAssignment?.eligible) return sendJson(res, 403, { error: "Test assignment is not available for this submission" });
-    if (["submitted", "evaluated"].includes(record.testAssignment.status)) {
+    if (["submitted", "evaluated", "refused"].includes(record.testAssignment.status)) {
       return sendJson(res, 200, { ok: true, testAssignment: record.testAssignment });
     }
     const updated = updateTestAssignment(id, {
@@ -3351,6 +3488,60 @@ async function handleApi(req, res) {
       targetId: id,
       vacancyCode: record.vacancyCode,
       payload: { score, decision: manualReview.decision }
+    });
+    return sendJson(res, 200, {
+      ok: true,
+      submission: publicCandidate(updated)
+    });
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "submissions" && parts[4] === "hr-decision") {
+    const id = parts[3];
+    const record = getSubmission(id);
+    if (!record) return sendJson(res, 404, { error: "Not found" });
+    if (!canManageVacancy(adminSession, record.vacancyCode)) return sendJson(res, 403, { error: "Нет доступа к этой вакансии." });
+    const payload = await readBody(req);
+    const allowed = new Set(["invite", "call", "test", "reject", "pool", "hidden_potential"]);
+    const decision = String(payload.decision || "").trim();
+    if (!allowed.has(decision)) return sendJson(res, 400, { error: "Неизвестное решение HR." });
+    const comment = cleanText(payload.comment, 1200);
+    const decidedAt = new Date().toISOString();
+    const hrDecision = {
+      decision,
+      comment,
+      decidedBy: adminSession.displayName || adminSession.username,
+      decidedByUsername: adminSession.username,
+      decidedAt
+    };
+    const updatedInterview = updateInterview(id, {
+      ...(record.interview || {}),
+      hrDecision
+    });
+    let updated = updatedInterview;
+    if (decision === "test") {
+      const baseConfig = getQuestionnaireConfig();
+      const config = getVacancyConfig(record.vacancyCode, baseConfig);
+      updated = updateTestAssignment(id, {
+        ...(updatedInterview.testAssignment || {}),
+        eligible: true,
+        status: ["submitted", "evaluated", "manual_reviewed"].includes(updatedInterview.testAssignment?.status)
+          ? updatedInterview.testAssignment.status
+          : "assigned",
+        threshold: testAssignmentConfig(config).threshold,
+        assignedAt: updatedInterview.testAssignment?.assignedAt || decidedAt,
+        assignedManuallyAt: decidedAt,
+        assignedBy: adminSession.displayName || adminSession.username,
+        refusedAt: null,
+        refusalReason: ""
+      });
+    }
+    insertAuditLog({
+      user: adminSession,
+      action: "candidate.hr_decision",
+      targetType: "submission",
+      targetId: id,
+      vacancyCode: record.vacancyCode,
+      payload: hrDecision
     });
     return sendJson(res, 200, {
       ok: true,
@@ -3908,6 +4099,47 @@ async function handleApi(req, res) {
     } catch (error) {
       return sendJson(res, error.statusCode || 400, { error: error.message || "Не удалось сохранить опросник." });
     }
+  }
+
+  if (req.method === "PUT" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "vacancies" && parts[4] === "test-assignment-settings") {
+    const vacancyCode = decodeURIComponent(parts[3] || "");
+    if (!vacancyCode) return sendJson(res, 400, { error: "Не указана вакансия." });
+    if (!canWriteVacancy(adminSession, vacancyCode)) return sendJson(res, 403, { error: "Менять настройки тестового может владелец или HR с доступом к этой вакансии." });
+    const payload = await readBody(req);
+    const mode = ["after_questionnaire", "after_call", "manual"].includes(payload.mode) ? payload.mode : "after_questionnaire";
+    const threshold = Math.max(0, Math.min(100, Math.round(Number(payload.threshold || 80))));
+    const config = getQuestionnaireConfig();
+    if (!config.vacancies?.[vacancyCode]) return sendJson(res, 404, { error: "Вакансия не найдена." });
+    const nextConfig = cloneJson(config);
+    nextConfig.vacancies = { ...(nextConfig.vacancies || {}) };
+    const currentVacancy = nextConfig.vacancies[vacancyCode];
+    nextConfig.vacancies[vacancyCode] = {
+      ...currentVacancy,
+      testAssignment: {
+        ...(currentVacancy.testAssignment || {}),
+        mode,
+        threshold
+      },
+      version: Number(currentVacancy.version || 1) + 1
+    };
+    if ((nextConfig.vacancyCode || "smm") === vacancyCode || nextConfig.activeVacancyCode === vacancyCode) {
+      nextConfig.testAssignment = nextConfig.vacancies[vacancyCode].testAssignment;
+    }
+    nextConfig.version = Number(nextConfig.version || 1) + 1;
+    const savedConfig = saveQuestionnaireConfig(nextConfig);
+    insertAuditLog({
+      user: adminSession,
+      action: "test_assignment.settings.update",
+      targetType: "vacancy",
+      targetId: vacancyCode,
+      vacancyCode,
+      payload: { mode, threshold }
+    });
+    return sendJson(res, 200, {
+      config: savedConfig.vacancies?.[vacancyCode],
+      rootConfig: savedConfig,
+      vacancies: getVacancies(savedConfig)
+    });
   }
 
   if (req.method === "PUT" && url.pathname === "/api/admin/config") {

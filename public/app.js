@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-26-10";
+const APP_CLIENT_VERSION = "2026-06-27-01";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -249,6 +249,9 @@ const state = {
   completedSubmission: null,
   testLink: "",
   testSubmitted: false,
+  testRefusalOpen: false,
+  testRefusalReason: "",
+  testRefused: false,
   testViewedIds: new Set(),
   user: null,
   config: null,
@@ -295,6 +298,8 @@ const state = {
   interviewCandidateId: "",
   interviewDrafts: {},
   testManualDrafts: {},
+  hrDecisionDrafts: {},
+  testSettingsDrafts: {},
   hiringRequestForm: {
     requestType: "start_existing",
     vacancyCode: "",
@@ -624,6 +629,7 @@ const VALUE_LABEL_OVERRIDES = {
   yellow: "ручная проверка",
   orange: "резерв",
   red: "отказ",
+  hidden_potential: "скрытый потенциал",
   Green: "сильный кандидат",
   Yellow: "ручная проверка",
   Orange: "резерв",
@@ -1285,7 +1291,7 @@ function testAssignmentView() {
           ? el("p", {}, ["Подготовьте Google Документ с коротким аудитом профиля: ", el("a", { href: task.profileUrl, target: "_blank", rel: "noopener noreferrer" }, [task.profileUrl]), "."])
           : el("p", {}, [task.title || "Подготовьте короткое практическое задание по описанию ниже."]),
         el("ol", {}, (task.instruction || []).map(text => el("li", {}, [text]))),
-        el("p", { class: "sublead" }, [`Сделайте документ открытым по ссылке для просмотра. Формат: ${task.submitFormat || "Google Документ с открытым доступом по ссылке"}. Важна логика, конкретика и аккуратная структура.`])
+        el("p", { class: "sublead" }, [`Сделайте документ открытым по ссылке для просмотра. Формат: ${task.submitFormat || "Google Документ с открытым доступом по ссылке"}. Важны не красивые макеты и не бесплатная работа, а ваша логика, конкретика и аккуратная структура.`])
       ]),
       el("section", { class: "task-submit" }, [
         el("label", { class: "named-input" }, [
@@ -1298,11 +1304,47 @@ function testAssignmentView() {
           })
         ]),
         el("button", { class: "btn primary", onclick: () => submitTestAssignment(id) }, ["Отправить ссылку", iconEl("arrow")]),
+        el("button", { class: "btn ghost test-refuse-button", onclick: () => {
+          state.testRefusalOpen = true;
+          render();
+        } }, ["Не готов(а) выполнять задание"]),
         telegramConnectBlock(id),
-        state.testSubmitted ? el("p", { class: "success-note" }, ["Ссылка сохранена. Спасибо! HR увидит тестовое в вашей карточке."]) : el("div")
-      ])
+        state.testSubmitted ? el("p", { class: "success-note" }, ["Ссылка сохранена. Спасибо! HR увидит тестовое в вашей карточке."]) : el("div"),
+        state.testRefused ? el("p", { class: "success-note muted" }, ["Спасибо, мы сохранили ваш ответ."]) : el("div")
+      ]),
+      state.testRefusalOpen ? testRefusalModal(id) : el("div")
     ]),
     siteFooter()
+  ]);
+}
+
+function testRefusalModal(id) {
+  return el("div", { class: "modal-backdrop", onclick: event => {
+    if (event.target.className === "modal-backdrop") {
+      state.testRefusalOpen = false;
+      render();
+    }
+  } }, [
+    el("section", { class: "modal-card test-refusal-modal" }, [
+      el("h2", {}, ["Отказаться от задания"]),
+      el("p", {}, ["Мы уважительно относимся к вашему решению. Просим в двух словах написать причину: это поможет нам сделать отбор понятнее и удобнее для кандидатов."]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Причина отказа"]),
+        el("textarea", {
+          class: "textarea",
+          placeholder: "Например: сейчас нет времени, не хочу делать задание до интервью, задание кажется слишком объемным",
+          value: state.testRefusalReason,
+          oninput: event => { state.testRefusalReason = event.target.value; }
+        })
+      ]),
+      el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn ghost", onclick: () => {
+          state.testRefusalOpen = false;
+          render();
+        } }, ["Вернуться к заданию"]),
+        el("button", { class: "btn danger", onclick: () => refuseTestAssignment(id) }, ["Отказаться"])
+      ])
+    ])
   ]);
 }
 
@@ -1319,6 +1361,25 @@ async function submitTestAssignment(id) {
   }
   state.testSubmitted = true;
   showToast("Ссылка на тестовое сохранена.");
+  render();
+}
+
+async function refuseTestAssignment(id) {
+  const reason = String(state.testRefusalReason || "").trim();
+  if (reason.length < 3) return showToast("Напишите причину отказа хотя бы в двух словах.");
+  const response = await fetch(`/api/submissions/${id}/test-assignment/refuse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить отказ." }));
+    showToast(error.error || "Не удалось сохранить отказ.");
+    return;
+  }
+  state.testRefusalOpen = false;
+  state.testRefused = true;
+  showToast("Ответ сохранен.");
   render();
 }
 
@@ -1877,6 +1938,96 @@ function adminQuestionnaireLinksPanel() {
   ]);
 }
 
+function testSettingsDraft() {
+  const code = state.adminVacancyCode || "smm";
+  const current = state.config?.testAssignment || {};
+  if (!state.testSettingsDrafts[code]) {
+    state.testSettingsDrafts[code] = {
+      mode: current.mode || "after_questionnaire",
+      threshold: current.threshold ?? 80
+    };
+  }
+  return state.testSettingsDrafts[code];
+}
+
+function testAssignmentModeLabel(mode) {
+  return {
+    after_questionnaire: "сразу после сильной анкеты",
+    after_call: "после короткого созвона",
+    manual: "только вручную"
+  }[mode] || "сразу после сильной анкеты";
+}
+
+async function saveTestAssignmentSettings() {
+  const code = state.adminVacancyCode || "smm";
+  const draft = testSettingsDraft();
+  const response = await fetch(`/api/admin/vacancies/${encodeURIComponent(code)}/test-assignment-settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить настройки тестового." }));
+    showToast(error.error || "Не удалось сохранить настройки тестового.");
+    return;
+  }
+  const data = await response.json();
+  state.adminConfigRoot = data.rootConfig || state.adminConfigRoot;
+  state.vacancies = data.vacancies || state.vacancies;
+  if (data.config) applyConfig(data.config);
+  state.testSettingsDrafts[code] = {
+    mode: data.config?.testAssignment?.mode || draft.mode,
+    threshold: data.config?.testAssignment?.threshold ?? draft.threshold
+  };
+  showToast("Настройки тестового сохранены.");
+  render();
+}
+
+function testAssignmentSettingsPanel() {
+  const editable = isHrOrOwner();
+  const draft = testSettingsDraft();
+  return el("section", { class: "table-panel test-settings-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Настройки тестового"]),
+        el("span", {}, [`Сейчас: ${testAssignmentModeLabel(draft.mode)}. Порог анкеты: ${draft.threshold}/100.`])
+      ]),
+      editable ? el("button", { class: "btn primary", onclick: saveTestAssignmentSettings }, ["Сохранить"]) : el("span")
+    ]),
+    el("div", { class: "test-settings-grid" }, [
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Когда выдавать задание"]),
+        el("select", {
+          class: "input",
+          disabled: editable ? null : "disabled",
+          onchange: event => {
+            draft.mode = event.target.value;
+            render();
+          }
+        }, [
+          el("option", { value: "after_questionnaire", selected: draft.mode === "after_questionnaire" ? "selected" : null }, ["Сразу после сильной анкеты"]),
+          el("option", { value: "after_call", selected: draft.mode === "after_call" ? "selected" : null }, ["После короткого созвона"]),
+          el("option", { value: "manual", selected: draft.mode === "manual" ? "selected" : null }, ["Только вручную"])
+        ]),
+        el("small", {}, ["Если выбрать созвон или ручной режим, кандидат не получит тестовое автоматически после анкеты."])
+      ]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Порог анкеты для автоматической выдачи"]),
+        el("input", {
+          class: "input",
+          type: "number",
+          min: "0",
+          max: "100",
+          disabled: editable ? null : "disabled",
+          value: draft.threshold,
+          oninput: event => { draft.threshold = event.target.value; }
+        }),
+        el("small", {}, ["Работает только в режиме автоматической выдачи после анкеты."])
+      ])
+    ])
+  ]);
+}
+
 const QUESTION_TYPE_LABELS = {
   namePair: "Имя и фамилия",
   contactPair: "Электронная почта и телефон",
@@ -2342,6 +2493,26 @@ function candidatesPanel(currentVacancyTitle) {
   ]);
 }
 
+function testRefusalsReportPanel() {
+  const refusals = (state.submissions || []).filter(item => item.testAssignment?.status === "refused");
+  return el("section", { class: "table-panel test-refusals-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Отказы от тестового"]),
+        el("span", {}, [refusals.length ? `Всего отказов: ${refusals.length}` : "Появится, если кандидат явно откажется выполнять задание."])
+      ])
+    ]),
+    refusals.length
+      ? el("div", { class: "test-refusal-list" }, refusals.map(item => el("button", { class: "test-refusal-row", onclick: () => openSubmission(item.id) }, [
+        el("strong", {}, [item.candidate.fullName || "Без имени"]),
+        el("span", {}, [item.testAssignment?.refusedAt ? formatDateTime(item.testAssignment.refusedAt) : "дата не указана"]),
+        el("p", {}, [item.testAssignment?.refusalReason || "Причина не указана"]),
+        el("em", {}, [item.funnelReview?.resumeReview?.hiddenPotential ? "Что делать: короткий созвон, резюме сильнее анкеты." : "Что делать: проверить резюме и принять ручное решение."])
+      ])))
+      : el("div", { class: "empty" }, ["Явных отказов от тестового пока нет."])
+  ]);
+}
+
 async function openSubmission(id) {
   const response = await fetch(`/api/admin/submissions/${id}`);
   if (!response.ok) return showToast("Не удалось открыть карточку.");
@@ -2431,6 +2602,53 @@ async function saveManualTestReview(item) {
   };
   await loadAdmin();
   showToast("Оценка руководителя сохранена.");
+  render();
+}
+
+function hrDecisionDraft(item) {
+  const review = item.interview?.hrDecision || {};
+  if (!state.hrDecisionDrafts[item.id]) {
+    state.hrDecisionDrafts[item.id] = {
+      decision: review.decision || "",
+      comment: review.comment || ""
+    };
+  }
+  return state.hrDecisionDrafts[item.id];
+}
+
+function hrDecisionLabel(value) {
+  return {
+    invite: "Пригласить на интервью",
+    call: "Назначить короткий созвон",
+    test: "Выдать тестовое",
+    reject: "Отклонить",
+    pool: "В резерв",
+    hidden_potential: "Скрытый потенциал"
+  }[value] || value || "—";
+}
+
+async function saveHrDecision(item, decision = "") {
+  const draft = hrDecisionDraft(item);
+  const nextDecision = decision || draft.decision;
+  if (!nextDecision) return showToast("Выберите решение HR.");
+  const response = await fetch(`/api/admin/submissions/${item.id}/hr-decision`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...draft, decision: nextDecision })
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Не удалось сохранить решение HR." }));
+    showToast(error.error || "Не удалось сохранить решение HR.");
+    return;
+  }
+  const data = await response.json();
+  state.selected = data.submission;
+  state.hrDecisionDrafts[item.id] = {
+    decision: data.submission.interview?.hrDecision?.decision || nextDecision,
+    comment: data.submission.interview?.hrDecision?.comment || draft.comment || ""
+  };
+  await loadAdmin();
+  showToast("Решение HR сохранено.");
   render();
 }
 
@@ -4419,8 +4637,10 @@ function adminView() {
         statusBar(analytics),
         vacancyMetricsDashboard(analytics),
         adminQuestionnaireLinksPanel(),
+        testAssignmentSettingsPanel(),
         questionnaireEditorPanel(),
-        candidatesPanel(currentVacancyTitle)
+        candidatesPanel(currentVacancyTitle),
+        testRefusalsReportPanel()
       ]),
       el("aside", { class: "dashboard-side" }, [
         el("section", { class: "insight-panel" }, [
@@ -4514,12 +4734,14 @@ function testAssignmentTimeline(testAssignment = {}) {
   if (!info) return el("div");
   const statusText = info.isSubmitted
     ? "Тестовое выполнено: кандидат прикрепил ссылку с результатом."
+    : testAssignment.status === "refused"
+      ? "Кандидат явно отказался выполнять тестовое задание."
     : info.isOverdue
       ? "Срок выполнения тестового задания истек."
       : info.issuedAt
         ? "Ждем ссылку на результат тестового задания."
         : "Тестовое назначено, но кандидат еще не открыл страницу задания.";
-  return el("div", { class: `test-timeline ${info.isOverdue ? "overdue" : info.isSubmitted ? "submitted" : ""}` }, [
+  return el("div", { class: `test-timeline ${testAssignment.status === "refused" ? "refused" : info.isOverdue ? "overdue" : info.isSubmitted ? "submitted" : ""}` }, [
     el("div", { class: "test-timeline-head" }, [
       el("strong", {}, ["Срок выполнения"]),
       el("span", {}, ["48 часов с момента выдачи"])
@@ -4548,6 +4770,7 @@ function communicationEventText(eventType) {
     questionnaire_completed: "анкета получена",
     test_assignment_invite: "приглашение к тестовому",
     test_assignment_received: "тестовое получено",
+    test_assignment_refused: "отказ от тестового",
     telegram_deep_link_linked: "Telegram привязан",
     telegram_link_confirmation_sent: "подтверждение в Telegram"
   };
@@ -4641,6 +4864,8 @@ function profileDrawer(item) {
         el("ul", {}, item.risks.map(text => el("li", {}, [text]))),
         item.flags.length ? el("div", { class: "flags" }, item.flags.map(flag => el("span", { class: flag.severity }, [flag.title]))) : el("div", { class: "flags ok" }, ["Стоп-факторы не найдены"])
       ]),
+      resumeReviewSection(item),
+      hrDecisionSection(item),
       funnelReviewSection(item),
       el("section", { class: "profile-section" }, [
         el("h3", {}, ["Баллы по блокам"]),
@@ -4658,6 +4883,7 @@ function profileDrawer(item) {
         answerLine("Назначение", item.testAssignment?.eligible ? "Тестовое назначено кандидату" : "Тестовое не назначалось"),
         answerLine("Статус", testAssignmentStatus(item.testAssignment)),
         testAssignmentTimeline(item.testAssignment),
+        testAssignmentRefusalBlock(item.testAssignment),
         item.testAssignment?.link
           ? answerLinkLine("Результат кандидата", item.testAssignment.link, "Открыть Google Документ")
           : answerLine("Результат кандидата", "кандидат еще не прикрепил ссылку"),
@@ -4676,6 +4902,74 @@ function profileDrawer(item) {
   ]);
 }
 
+function resumeReviewSection(item) {
+  const review = item.funnelReview?.resumeReview || {};
+  return el("section", { class: "profile-section resume-review-section" }, [
+    el("h3", {}, ["Оценка резюме"]),
+    answerLine("Балл резюме", `${review.score ?? item.funnelReview?.resumeScore ?? 0}/100`),
+    answerLine("Статус", review.status || "нет оценки"),
+    review.explanation ? el("p", {}, [review.explanation]) : el("p", { class: "muted" }, ["Резюме оценивается по доступным ссылкам, файлам и ответам кандидата."]),
+    review.signals?.length ? el("div", {}, [
+      el("strong", {}, ["Что подтверждает опыт"]),
+      el("ul", {}, review.signals.map(text => el("li", {}, [text])))
+    ]) : el("div"),
+    review.risks?.length ? el("div", {}, [
+      el("strong", {}, ["Что требует проверки"]),
+      el("ul", {}, review.risks.map(text => el("li", {}, [text])))
+    ]) : el("div"),
+    review.hiddenPotential ? el("div", { class: "soft-alert yellow" }, ["Скрытый потенциал: резюме выглядит сильнее анкеты. Рекомендуется короткий созвон перед отказом."]) : el("div")
+  ]);
+}
+
+function hrDecisionSection(item) {
+  const saved = item.interview?.hrDecision || null;
+  const draft = hrDecisionDraft(item);
+  const options = [
+    ["invite", "Пригласить"],
+    ["call", "Короткий созвон"],
+    ["test", "Выдать тестовое"],
+    ["hidden_potential", "Скрытый потенциал"],
+    ["pool", "В резерв"],
+    ["reject", "Отклонить"]
+  ];
+  return el("section", { class: "profile-section hr-decision-section" }, [
+    el("h3", {}, ["Решение HR"]),
+    saved ? el("div", { class: "soft-alert" }, [
+      el("strong", {}, [hrDecisionLabel(saved.decision)]),
+      el("span", {}, [`Принял(а): ${saved.decidedBy || saved.decidedByUsername || "—"}${saved.decidedAt ? `, ${formatDateTime(saved.decidedAt)}` : ""}`]),
+      saved.comment ? el("p", {}, [saved.comment]) : el("p", { class: "muted" }, ["Комментарий не указан."])
+    ]) : el("p", { class: "muted" }, ["Ручное решение пока не принято."]),
+    canReviewTestAssignment() ? el("div", { class: "hr-decision-actions" }, [
+      ...options.map(([value, label]) => el("button", {
+        class: `btn ghost ${draft.decision === value ? "active" : ""}`,
+        onclick: () => {
+          draft.decision = value;
+          saveHrDecision(item, value);
+        }
+      }, [label])),
+      el("label", { class: "named-input hr-decision-comment" }, [
+        el("span", {}, ["Комментарий к решению"]),
+        el("textarea", {
+          class: "textarea",
+          placeholder: "Коротко: почему приняли такое решение и что делать дальше",
+          value: draft.comment,
+          oninput: event => { draft.comment = event.target.value; }
+        })
+      ]),
+      el("button", { class: "btn primary", onclick: () => saveHrDecision(item) }, ["Сохранить комментарий"])
+    ]) : el("div")
+  ]);
+}
+
+function testAssignmentRefusalBlock(testAssignment = {}) {
+  if (testAssignment.status !== "refused") return el("div");
+  return el("div", { class: "test-refusal-note" }, [
+    el("strong", {}, ["Кандидат отказался от тестового задания"]),
+    answerLine("Дата отказа", testAssignment.refusedAt ? formatDateTime(testAssignment.refusedAt) : "—"),
+    answerLine("Причина", testAssignment.refusalReason || "не указана")
+  ]);
+}
+
 function funnelReviewSection(item) {
   const review = item.funnelReview;
   if (!review) return el("div");
@@ -4683,6 +4977,7 @@ function funnelReviewSection(item) {
   const testReview = review.testReview || {};
   return el("section", { class: "profile-section funnel-review" }, [
     el("h3", {}, ["Суммарная рекомендация по воронке"]),
+    answerLine("Оценка резюме", `${review.resumeScore ?? 0}/100`),
     answerLine("Оценка анкеты", `${review.questionnaireScore}/100`),
     answerLine("Оценка тестового", review.testScore === null ? "тестовое еще не оценено" : `${review.testScore}/100`),
     testReview.formula ? answerLine("Формула тестового", testReview.formula) : el("div"),
@@ -4691,7 +4986,8 @@ function funnelReviewSection(item) {
     answerLine("Итоговая оценка", `${review.totalScore}/100`),
     answerLine("Формула", review.formula),
     el("div", { class: `status-pill ${rec.code || "yellow"}` }, [rec.label || "Ручной разбор"]),
-    el("p", {}, [rec.action || ""])
+    el("p", {}, [rec.action || ""]),
+    review.explanation ? el("p", { class: "muted" }, [review.explanation]) : el("div")
   ]);
 }
 
@@ -4781,6 +5077,7 @@ function consentText(consent) {
 
 function testAssignmentStatus(testAssignment) {
   if (!testAssignment?.eligible) return "не назначалось";
+  if (testAssignment.status === "refused") return "Кандидат отказался выполнять тестовое задание";
   if (testAssignment.status === "evaluated") return "Оценено ИИ: есть анализ и балл тестового задания";
   if (testAssignment.status === "manual_reviewed") return "Оценено руководителем: ожидает оценку нейросети или сравнение";
   if (testAssignment.status === "submitted") return "Выполнено: кандидат прикрепил ссылку с результатом";
