@@ -2274,8 +2274,11 @@ h3 {
 }
 
 .btn {
+  width: auto;
+  min-width: 0;
   min-height: 44px;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -2552,9 +2555,9 @@ h3 {
 
 .platform-question-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .platform-question-input {
@@ -2563,8 +2566,9 @@ h3 {
 }
 
 .platform-question-button {
-  align-self: stretch;
-  min-width: 210px;
+  align-self: start;
+  justify-self: end;
+  min-width: 0;
 }
 
 .platform-question-examples {
@@ -3703,14 +3707,14 @@ h3 {
   }
 
   .admin-form-actions {
-    display: grid;
-    grid-template-columns: 1fr;
-    justify-content: stretch;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .admin-form-actions .btn {
-    width: 100%;
-    max-width: none;
+    width: auto;
+    max-width: 260px;
   }
 
   .dash-header h1 {
