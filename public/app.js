@@ -1,7 +1,8 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-27-01";
+const APP_CLIENT_VERSION = "2026-06-27-02";
+const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
   privacy: "privacy_v2",
@@ -294,6 +295,8 @@ const state = {
   updateAvailable: false,
   updateVersion: null,
   updateCheckInProgress: false,
+  releaseNotesOpen: false,
+  releaseNoteIndex: 0,
   candidateListExpanded: false,
   interviewCandidateId: "",
   interviewDrafts: {},
@@ -4678,7 +4681,8 @@ function adminView() {
       el("div", { class: "admin-content" }, [mainContent])
     ]),
     selected ? profileDrawer(selected) : el("div"),
-    vacancyCreatedDialog()
+    vacancyCreatedDialog(),
+    releaseNotesModal()
   ]);
 }
 
@@ -5119,8 +5123,15 @@ async function checkAppVersion(showActualToast = false) {
     const changed = state.updateAvailable !== available || state.updateVersion?.version !== latestVersion;
     state.updateAvailable = available;
     state.updateVersion = versionInfo;
+    if (!available && latestVersion === APP_CLIENT_VERSION && currentAppRoute() === "admin") {
+      const seenVersion = localStorage.getItem(APP_RELEASE_SEEN_KEY);
+      if (seenVersion !== APP_CLIENT_VERSION) {
+        state.releaseNotesOpen = true;
+        state.releaseNoteIndex = 0;
+      }
+    }
     if (showActualToast && !available) showToast("У вас актуальная версия.");
-    if (changed && currentAppRoute() === "admin") render();
+    if ((changed || state.releaseNotesOpen) && currentAppRoute() === "admin") render();
   } catch {
     if (showActualToast) showToast("Не удалось проверить обновления.");
   } finally {
@@ -5130,6 +5141,48 @@ async function checkAppVersion(showActualToast = false) {
 
 function applyAppUpdate() {
   window.location.reload();
+}
+
+function closeReleaseNotes() {
+  localStorage.setItem(APP_RELEASE_SEEN_KEY, APP_CLIENT_VERSION);
+  state.releaseNotesOpen = false;
+  state.releaseNoteIndex = 0;
+  render();
+}
+
+function releaseNotesModal() {
+  if (!state.releaseNotesOpen || currentAppRoute() !== "admin") return el("div");
+  const info = state.updateVersion || {};
+  const notes = Array.isArray(info.notes) && info.notes.length
+    ? info.notes
+    : ["Платформа обновлена. Изменения применены и уже доступны в интерфейсе."];
+  const index = Math.max(0, Math.min(state.releaseNoteIndex || 0, notes.length - 1));
+  const hasMany = notes.length > 1;
+  return el("div", { class: "release-backdrop" }, [
+    el("section", { class: "release-card" }, [
+      el("div", { class: "release-kicker" }, ["Платформа обновлена"]),
+      el("h2", {}, [info.title || "Что нового"]),
+      el("p", { class: "release-version" }, [`Версия ${info.version || APP_CLIENT_VERSION}${info.releasedAt ? ` от ${formatDateTime(info.releasedAt)}` : ""}`]),
+      el("div", { class: "release-note" }, [
+        hasMany ? el("span", {}, [`${index + 1} из ${notes.length}`]) : el("span"),
+        el("p", {}, [notes[index]])
+      ]),
+      hasMany ? el("ol", { class: "release-list" }, notes.map((note, noteIndex) => (
+        el("li", { class: noteIndex === index ? "active" : "" }, [note])
+      ))) : el("div"),
+      el("div", { class: "release-actions" }, [
+        hasMany && index < notes.length - 1
+          ? el("button", { class: "btn primary", onclick: () => {
+            state.releaseNoteIndex = index + 1;
+            render();
+          } }, ["Далее"])
+          : el("button", { class: "btn primary", onclick: closeReleaseNotes }, ["Понятно"]),
+        hasMany && index < notes.length - 1
+          ? el("button", { class: "btn ghost", onclick: closeReleaseNotes }, ["Закрыть"])
+          : el("div")
+      ])
+    ])
+  ]);
 }
 
 function updateNotice() {
