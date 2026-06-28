@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-28-02";
+const APP_CLIENT_VERSION = "2026-06-28-03";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -4625,9 +4625,8 @@ function adminView() {
       el("div", { class: "dashboard-main" }, [
         el("header", { class: "dash-header" }, [
           el("div", {}, [
-            el("div", { class: "badge" }, [iconEl("filter"), `Воронка: ${currentVacancyTitle}`]),
-            el("h1", {}, [state.adminSection === "vacancies" ? `Вакансия: ${currentVacancyTitle}` : "Дашборд кандидатов"]),
-            el("p", {}, [analytics.summary || "Загрузка..."])
+            el("h1", {}, [state.adminSection === "vacancies" ? currentVacancyTitle : "Кандидаты"]),
+            state.adminSection === "vacancies" ? el("div") : el("p", {}, ["Сводка по кандидатам и этапам отбора."])
           ]),
           el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Анализ потока нейросетью"])
         ]),
@@ -4635,7 +4634,9 @@ function adminView() {
           kpi("Анкет", analytics.total),
           kpi("Средний балл", `${analytics.avgScore}/100`),
           kpi("Сильные", analytics.statusCounts.green || 0, "green"),
-          kpi("Проверка", analytics.statusCounts.yellow || 0, "yellow")
+          kpi("Проверка", analytics.statusCounts.yellow || 0, "yellow"),
+          kpi("Резерв", analytics.statusCounts.orange || 0, "orange"),
+          kpi("Отказ", analytics.statusCounts.red || 0, "red")
         ]),
         statusBar(analytics),
         vacancyMetricsDashboard(analytics),
