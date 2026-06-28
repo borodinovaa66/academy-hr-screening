@@ -3707,8 +3707,10 @@ h3 {
     max-width: 260px;
   }
 
-  .dash-header h1 {
-    font-size: 38px;
+  .dash-header h1,
+  .admin-shell .dash-header h1 {
+    font-size: 32px;
+    line-height: 1.12;
   }
 
   .candidate-row {
@@ -4488,15 +4490,15 @@ h3 {
 }
 
 .admin-shell .dash-header h1 {
-  max-width: 980px;
-  font-size: clamp(42px, 4.6vw, 72px);
-  line-height: 0.98;
+  max-width: 1080px;
+  font-size: clamp(30px, 3vw, 44px);
+  line-height: 1.08;
 }
 
 .admin-shell .dash-header p {
   max-width: 880px;
-  font-size: 20px;
-  line-height: 1.35;
+  font-size: 18px;
+  line-height: 1.42;
 }
 
 .admin-shell .badge {
