@@ -685,16 +685,6 @@ body {
   box-shadow: 0 26px 80px rgba(0, 0, 0, 0.32);
 }
 
-.release-kicker {
-  width: fit-content;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(255, 246, 184, 0.18);
-  color: #fff6b8;
-  font-size: 15px;
-  font-weight: 850;
-}
-
 .release-card h2 {
   margin: 0;
   font-size: clamp(34px, 5vw, 58px);
