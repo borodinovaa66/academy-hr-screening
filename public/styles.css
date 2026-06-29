@@ -3110,6 +3110,43 @@ h3 {
   border-radius: 8px;
 }
 
+.ai-box h3 {
+  margin: 8px 0 0;
+  font-size: 18px;
+}
+
+.ai-recommendation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-recommendation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.ai-recommendation-row p {
+  margin: 0;
+}
+
+.ai-apply-button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.ai-action-card {
+  width: min(720px, 100%);
+}
+
+.ai-action-text {
+  min-height: 120px;
+}
+
 .mode {
   color: var(--blue);
   font-size: 12px;
@@ -3719,6 +3756,14 @@ h3 {
 
   .candidate-open {
     grid-template-columns: minmax(0, 1fr) 58px;
+  }
+
+  .ai-recommendation-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-apply-button {
+    justify-self: start;
   }
 
   .candidate-open .status-pill,

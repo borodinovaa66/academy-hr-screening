@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-28-03";
+const APP_CLIENT_VERSION = "2026-06-29-01";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -90,7 +90,7 @@ let labels = {
     autopostingServices: "Сервисы автопостинга",
     sheets: "Электронные таблицы",
     projectTools: "Сервисы управления задачами",
-    textAi: "Текстовые нейросети",
+    textAi: "Текстовые ИИ",
     visualAi: "ИИ для визуалов",
     socialAnalytics: "Аналитика соцсетей",
     noTools: "Не использую проф. инструменты"
@@ -247,6 +247,9 @@ const state = {
   analytics: null,
   selected: null,
   aiInsights: null,
+  aiActionProposal: null,
+  aiActionEditText: "",
+  acceptedAiActions: [],
   completedSubmission: null,
   testLink: "",
   testSubmitted: false,
@@ -657,7 +660,7 @@ const FIELD_LABEL_OVERRIDES = {
     capcut: "Видеоредактор",
     sheets: "Электронные таблицы",
     projectTools: "Сервисы управления задачами",
-    textAi: "Текстовые нейросети"
+    textAi: "Текстовые ИИ"
   },
   soloDesign: {
     stories: "Оформить истории"
@@ -686,9 +689,104 @@ function recommendationLabel(recommendation = {}) {
 }
 
 function modelModeLabel(mode) {
-  if (mode === "yandex") return "Яндекс GPT";
-  if (mode === "openai" || mode === "ai") return "Внешняя нейросеть";
-  return "Локальная оценка";
+  if (mode === "local") return "Расчет платформы";
+  return "ИИ HR";
+}
+
+function aiActionTarget(text = "") {
+  const lower = text.toLowerCase();
+  if (lower.includes("анкет") || lower.includes("опрос") || lower.includes("вопрос")) {
+    return {
+      title: "Изменение опросника",
+      section: "vacancies",
+      editLabel: "Открыть опросник",
+      result: "Предложение принято. Откройте редактор опросника, проверьте формулировки и сохраните изменения."
+    };
+  }
+  if (lower.includes("интерв")) {
+    return {
+      title: "Изменение сценария интервью",
+      section: "interview",
+      editLabel: "Открыть интервью",
+      result: "Предложение принято. Проверьте сценарий интервью и внесите правки перед использованием."
+    };
+  }
+  if (lower.includes("ваканс") || lower.includes("описан") || lower.includes("требован") || lower.includes("доход")) {
+    return {
+      title: "Изменение описания вакансии",
+      section: "hh",
+      editLabel: "Открыть публикации",
+      result: "Предложение принято. Проверьте текст вакансии перед публикацией или синхронизацией."
+    };
+  }
+  return {
+    title: "Рабочая рекомендация",
+    section: "analytics",
+    editLabel: "Открыть аналитику",
+    result: "Предложение принято. Проверьте рекомендацию и назначьте ответственное действие вручную."
+  };
+}
+
+function openAiActionProposal(text, source = "ai") {
+  const action = aiActionTarget(text);
+  state.aiActionProposal = {
+    id: `ai_action_${Date.now()}`,
+    source,
+    text,
+    ...action
+  };
+  state.aiActionEditText = text;
+  render();
+}
+
+function closeAiActionProposal() {
+  state.aiActionProposal = null;
+  state.aiActionEditText = "";
+  render();
+}
+
+function acceptAiActionProposal() {
+  const proposal = state.aiActionProposal;
+  if (!proposal) return;
+  state.acceptedAiActions = [
+    ...(state.acceptedAiActions || []),
+    {
+      ...proposal,
+      text: state.aiActionEditText || proposal.text,
+      acceptedAt: new Date().toISOString()
+    }
+  ];
+  const message = proposal.result || "Предложение принято.";
+  closeAiActionProposal();
+  showToast(message);
+}
+
+function editAiActionProposal() {
+  const proposal = state.aiActionProposal;
+  if (!proposal) return;
+  const nextSection = proposal.section || "analytics";
+  state.adminSection = nextSection;
+  if (nextSection === "vacancies") {
+    state.questionnaireDraft = null;
+    state.questionnaireDraftVacancyCode = "";
+  }
+  history.replaceState(null, "", nextSection === "overview" ? "#admin" : `#admin/${nextSection}`);
+  closeAiActionProposal();
+}
+
+function aiRecommendationItem(text, source = "ai") {
+  return el("div", { class: "ai-recommendation-row" }, [
+    el("p", {}, [text]),
+    el("button", { class: "btn ghost ai-apply-button", onclick: () => openAiActionProposal(text, source) }, ["Применить"])
+  ]);
+}
+
+function aiRecommendationList(items = [], source = "ai") {
+  return el("div", { class: "ai-recommendation-list" }, (
+    items.length
+      ? items.map(text => aiRecommendationItem(text, source))
+      : [el("p", { class: "muted" }, ["Рекомендаций пока нет."])]
+  ));
 }
 
 function applyConfig(config) {
@@ -1825,7 +1923,7 @@ function platformAssistantPanel() {
         el("h2", {}, ["Спросить платформу"]),
         el("span", {}, ["Ответ по данным вакансий, подборов и подключенных интеграций."])
       ]),
-      el("span", {}, [state.platformAnswer?.mode === "local" ? "локальный ответ" : state.platformAnswer ? "ответ нейросети" : ""])
+      el("span", {}, [state.platformAnswer?.mode === "local" ? "локальный ответ" : state.platformAnswer ? "ответ ИИ HR" : ""])
     ]),
     el("div", { class: "platform-question-form" }, [
       el("textarea", {
@@ -2540,7 +2638,7 @@ async function runAiInsights() {
   render();
   const response = await fetch(`/api/admin/ai-insights?vacancy=${encodeURIComponent(state.adminVacancyCode || "smm")}`, { method: "POST" });
   state.loading = false;
-  if (!response.ok) return showToast("Анализ нейросетью не запустился.");
+  if (!response.ok) return showToast("ИИ HR не запустился.");
   state.aiInsights = (await response.json()).insights;
   render();
 }
@@ -2759,7 +2857,7 @@ async function evaluateInterviewDraft(candidate) {
   const data = await response.json();
   updateSubmissionInState(data.submission);
   await loadAdmin();
-  showToast("Оценка интервью нейросетью готова.");
+  showToast("Оценка интервью ИИ HR готова.");
   render();
 }
 
@@ -3014,7 +3112,7 @@ function interviewDecisionFields(candidate, draft, interview) {
 function interviewEvaluationPanel(candidate, draft) {
   const evaluation = draft.evaluation || candidate?.interview?.evaluation;
   return el("section", { class: "interview-form-section interview-result" }, [
-    el("h3", {}, ["Оценка интервью нейросетью"]),
+    el("h3", {}, ["Оценка интервью ИИ HR"]),
     evaluation ? el("div", { class: "ai-box" }, [
       el("span", { class: "mode" }, [modelModeLabel(evaluation.mode)]),
       answerLine("Балл интервью", `${evaluation.score || 0}/100`),
@@ -3024,7 +3122,7 @@ function interviewEvaluationPanel(candidate, draft) {
       evaluation.recommendation ? el("p", {}, [`Решение: ${evaluation.recommendation}`]) : el("div"),
       ...(evaluation.nextSteps || []).map(text => el("p", {}, [`Следующий шаг: ${text}`])),
       ...(evaluation.interviewQuestionsToClarify || []).map(text => el("p", {}, [`Уточнить: ${text}`]))
-    ]) : el("p", { class: "muted" }, ["Заполните оценочный лист и запустите оценку нейросетью. Если нейросеть недоступна, система посчитает локальную оценку по баллам 1-5."])
+    ]) : el("p", { class: "muted" }, ["Заполните оценочный лист и запустите оценку ИИ HR. Если ИИ HR недоступен, система посчитает локальную оценку по баллам 1-5."])
   ]);
 }
 
@@ -3180,7 +3278,7 @@ function analyticsDashboardView(analytics) {
         el("h1", {}, ["Визуальная аналитика"]),
         el("p", {}, ["Здесь видно, сколько кандидатов заходит, где они доходят до конца и какого качества получается поток."])
       ]),
-      el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Выводы нейросети"])
+      el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Спросить ИИ HR"])
     ]),
     el("div", { class: "analytics-grid" }, [
       funnelPanel(analytics),
@@ -3191,15 +3289,16 @@ function analyticsDashboardView(analytics) {
       analyticsList("Инструменты", analytics.topTools || [], "tools"),
       analyticsList("Метрики", analytics.topMetrics || [], "metrics"),
       el("section", { class: "insight-panel chart-panel" }, [
-        el("h2", {}, ["Выводы"]),
-        ...(analytics.recommendations || []).map(text => el("p", {}, [text])),
+        el("h2", {}, ["Рекомендации"]),
+        aiRecommendationList(analytics.recommendations || [], "platform"),
         state.aiInsights ? el("div", { class: "ai-box" }, [
           el("span", { class: "mode" }, [modelModeLabel(state.aiInsights.mode)]),
           el("strong", {}, [state.aiInsights.summary || ""]),
-          ...(state.aiInsights.recommendations || []).map(text => el("p", {}, [text])),
+          el("h3", {}, ["Рекомендации ИИ HR"]),
+          aiRecommendationList(state.aiInsights.recommendations || [], "ai"),
           ...(state.aiInsights.interviewFocus || []).map(text => el("p", {}, [`Интервью: ${text}`])),
           ...(state.aiInsights.risks || []).map(text => el("p", { class: "risk-text" }, [text]))
-        ]) : el("p", { class: "muted" }, ["Нажмите выводы нейросети, чтобы получить интерпретацию потока через подключенную модель."])
+        ]) : el("p", { class: "muted" }, ["Нажмите «Спросить ИИ HR», чтобы получить интерпретацию потока."])
       ])
     ])
   ]);
@@ -3410,7 +3509,7 @@ function auditLogView() {
       el("div", {}, [
         el("div", { class: "badge" }, [iconEl("list"), "Контроль"]),
         el("h1", {}, ["Журнал действий"]),
-        el("p", {}, ["Здесь фиксируются входы, изменения сотрудников, удаление кандидатов, анализ нейросетью и оценка тестовых."])
+        el("p", {}, ["Здесь фиксируются входы, изменения сотрудников, удаление кандидатов, анализ ИИ HR и оценка тестовых."])
       ])
     ]),
     el("section", { class: "table-panel" }, [
@@ -3440,7 +3539,7 @@ function auditActionLabel(action) {
     "submission.delete": "Удаление кандидата",
     "test_assignment.evaluate": "Оценка тестового",
     "test_assignment.manual_review": "Оценка руководителя",
-    "analytics.ai_insights": "Анализ потока нейросетью",
+    "analytics.ai_insights": "Анализ ИИ HR",
     "vacancy.create": "Создание вакансии",
     "questionnaire.questions.update": "Изменение опросника вакансии",
     "config.update": "Изменение методологии"
@@ -3702,7 +3801,7 @@ async function analyzeVacancyWizard(forceDraft = false) {
   } else {
     wizard.draft = data.draft;
     wizard.step = "draft";
-    showToast(data.mode === "local" ? "Черновик вакансии подготовлен локально." : "Нейросеть подготовила черновик вакансии.");
+    showToast(data.mode === "local" ? "Черновик вакансии подготовлен локально." : "ИИ HR подготовил черновик вакансии.");
   }
   render();
 }
@@ -4628,7 +4727,7 @@ function adminView() {
             el("h1", {}, [state.adminSection === "vacancies" ? currentVacancyTitle : "Кандидаты"]),
             state.adminSection === "vacancies" ? el("div") : el("p", {}, ["Сводка по кандидатам и этапам отбора."])
           ]),
-          el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Анализ потока нейросетью"])
+          el("button", { class: "btn primary", onclick: runAiInsights }, [iconEl("spark"), "Спросить ИИ HR"])
         ]),
         el("div", { class: "kpi-grid" }, [
           kpi("Анкет", analytics.total),
@@ -4649,13 +4748,14 @@ function adminView() {
       el("aside", { class: "dashboard-side" }, [
         el("section", { class: "insight-panel" }, [
           el("h2", {}, ["Рекомендации"]),
-          ...(analytics.recommendations || []).map(text => el("p", {}, [text])),
+          aiRecommendationList(analytics.recommendations || [], "platform"),
           state.aiInsights ? el("div", { class: "ai-box" }, [
             el("span", { class: "mode" }, [modelModeLabel(state.aiInsights.mode)]),
             el("strong", {}, [state.aiInsights.summary || ""]),
-            ...(state.aiInsights.recommendations || []).map(text => el("p", {}, [text])),
+            el("h3", {}, ["Рекомендации ИИ HR"]),
+            aiRecommendationList(state.aiInsights.recommendations || [], "ai"),
             ...(state.aiInsights.risks || []).map(text => el("p", { class: "risk-text" }, [text]))
-          ]) : el("p", { class: "muted" }, ["Нейросетевой блок подключен. Нажмите анализ потока, чтобы получить выводы."])
+          ]) : el("p", { class: "muted" }, ["Нажмите «Спросить ИИ HR», чтобы получить выводы."])
         ]),
         analyticsList("Типы проектов", analytics.topProjectTypes || [], "projectTypes"),
         analyticsList("Инструменты", analytics.topTools || [], "tools"),
@@ -4683,7 +4783,8 @@ function adminView() {
     ]),
     selected ? profileDrawer(selected) : el("div"),
     vacancyCreatedDialog(),
-    releaseNotesModal()
+    releaseNotesModal(),
+    aiActionProposalDialog()
   ]);
 }
 
@@ -5010,7 +5111,7 @@ function testAssignmentEvaluationBlock(item) {
       el("strong", {}, [`Итог тестового: ${review.finalScore}/100`]),
       el("span", {}, [review.formula || ""]),
       review.comparisonLabel ? el("em", {}, [review.difference === null ? review.comparisonLabel : `${review.comparisonLabel}. Разница: ${review.difference} баллов.`]) : el("em")
-    ]) : el("p", { class: "muted" }, ["Ждем оценку тестового. Нужна ручная оценка руководителя и желательно анализ нейросетью."]),
+    ]) : el("p", { class: "muted" }, ["Ждем оценку тестового. Нужна ручная оценка руководителя и желательно анализ ИИ HR."]),
     el("div", { class: "test-review-grid" }, [
       el("section", { class: "test-review-card" }, [
         el("h4", {}, ["Оценка руководителя"]),
@@ -5055,7 +5156,7 @@ function testAssignmentEvaluationBlock(item) {
         ]) : el("div")
       ]),
       el("section", { class: "test-review-card" }, [
-        el("h4", {}, ["Оценка нейросети"]),
+        el("h4", {}, ["Оценка ИИ HR"]),
         evaluation ? el("div", { class: "ai-box compact" }, [
           el("span", { class: "mode" }, [modelModeLabel(evaluation.mode)]),
           answerLine("Балл", `${evaluation.score}/100`),
@@ -5064,7 +5165,7 @@ function testAssignmentEvaluationBlock(item) {
           ...(evaluation.risks || []).map(text => el("p", { class: "risk-text" }, [`Риск: ${text}`])),
           evaluation.recommendation ? el("p", {}, [`Рекомендация: ${evaluation.recommendation}`]) : el("div"),
           ...(evaluation.interviewQuestions || []).map(text => el("p", {}, [`Проверить на интервью: ${text}`]))
-        ]) : el("p", { class: "muted" }, ["Оценка нейросети еще не выполнена. После прикрепления результата запустите анализ тестового задания."]),
+        ]) : el("p", { class: "muted" }, ["Оценка ИИ HR еще не выполнена. После прикрепления результата запустите анализ тестового задания."]),
         canEvaluate ? el("button", {
           class: "btn primary",
           onclick: () => evaluateTestAssignmentForSelected(item.id)
@@ -5084,7 +5185,7 @@ function testAssignmentStatus(testAssignment) {
   if (!testAssignment?.eligible) return "не назначалось";
   if (testAssignment.status === "refused") return "Кандидат отказался выполнять тестовое задание";
   if (testAssignment.status === "evaluated") return "Оценено ИИ: есть анализ и балл тестового задания";
-  if (testAssignment.status === "manual_reviewed") return "Оценено руководителем: ожидает оценку нейросети или сравнение";
+  if (testAssignment.status === "manual_reviewed") return "Оценено руководителем: ожидает оценку ИИ HR или сравнение";
   if (testAssignment.status === "submitted") return "Выполнено: кандидат прикрепил ссылку с результатом";
   if (testAssignment.status === "issued") return "Тестовое выдано: кандидат открыл страницу задания";
   if (testAssignment.status === "assigned") return "Назначено: кандидат получил переход к тестовому, страницу задания еще не открывал";
@@ -5180,6 +5281,37 @@ function releaseNotesModal() {
         hasMany && index < notes.length - 1
           ? el("button", { class: "btn ghost", onclick: closeReleaseNotes }, ["Закрыть"])
           : el("div")
+      ])
+    ])
+  ]);
+}
+
+function aiActionProposalDialog() {
+  const proposal = state.aiActionProposal;
+  if (!proposal || currentAppRoute() !== "admin") return el("div");
+  return el("div", { class: "modal-backdrop ai-action-backdrop" }, [
+    el("section", { class: "modal-card ai-action-card" }, [
+      el("span", { class: "mode" }, ["ИИ HR"]),
+      el("h2", {}, [proposal.title || "Применить рекомендацию"]),
+      el("p", {}, ["Перед внесением изменений проверьте рекомендацию. Ничего не публикуется и не меняется без вашего подтверждения."]),
+      el("label", { class: "named-input" }, [
+        el("span", {}, ["Что предлагается сделать"]),
+        el("textarea", {
+          class: "textarea ai-action-text",
+          value: state.aiActionEditText || proposal.text,
+          oninput: event => {
+            state.aiActionEditText = event.target.value;
+          }
+        }, [state.aiActionEditText || proposal.text])
+      ]),
+      el("div", { class: "soft-alert yellow" }, [
+        el("strong", {}, ["Важно"]),
+        el("p", {}, ["Кнопка «Принять» фиксирует согласие на изменение. Перед публикацией вакансии, сохранением анкеты или изменением скрипта все равно нужно проверить текст вручную."])
+      ]),
+      el("div", { class: "modal-actions" }, [
+        el("button", { class: "btn ghost", onclick: closeAiActionProposal }, ["Отменить"]),
+        el("button", { class: "btn ghost", onclick: editAiActionProposal }, ["Редактировать"]),
+        el("button", { class: "btn primary", onclick: acceptAiActionProposal }, ["Принять"])
       ])
     ])
   ]);

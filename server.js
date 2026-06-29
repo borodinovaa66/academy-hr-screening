@@ -1936,7 +1936,7 @@ function buildPlatformQuestionContext(session) {
     currentRules: [
       "Публикация вакансии требует проверки и подтверждения человеком.",
       "Сообщения с анкетой отправляются кандидатам после отклика на HeadHunter.",
-      "Оценка тестового задания: руководитель ставит финальный ручной балл, нейросеть дает второе мнение.",
+      "Оценка тестового задания: руководитель ставит финальный ручной балл, ИИ HR дает второе мнение.",
       "Удаление или объединение вакансий должно выполняться только после проверки связей с кандидатами, публикациями и активными подборами."
     ]
   };
@@ -2519,8 +2519,8 @@ function buildTestAssignmentReview(testAssignment = {}) {
         ? "manual_review"
         : "conflict";
   const comparisonLabel = {
-    waiting_scores: "ждем оценку руководителя и нейросети",
-    waiting_ai: "ждем оценку нейросети",
+    waiting_scores: "ждем оценку руководителя и ИИ HR",
+    waiting_ai: "ждем оценку ИИ HR",
     waiting_manual: "ждем оценку руководителя",
     aligned: "оценки согласованы",
     manual_review: "есть расхождение, нужна ручная проверка",
@@ -2538,7 +2538,7 @@ function buildTestAssignmentReview(testAssignment = {}) {
       : hasManual
         ? "пока только оценка руководителя"
         : hasAi
-          ? "пока только оценка нейросети"
+          ? "пока только оценка ИИ HR"
           : "тестовое еще не оценено"
   };
 }
@@ -2699,10 +2699,10 @@ async function generateAiInsights(submissions, analytics, config = {}) {
 
   if (AI_PROVIDER === "yandex") {
     if (!YANDEX_GPT_API_KEY || !YANDEX_FOLDER_ID) {
-      return fallback("Анализ нейросетью не выполнен: на сервере не заданы ключ и каталог Яндекс GPT.");
+      return fallback("ИИ HR не выполнил анализ: на сервере не заданы ключ и каталог.");
     }
     return generateYandexInsights(submissions, analytics, config).catch(error => (
-      fallback(`Анализ нейросетью не выполнен: Яндекс GPT вернул ошибку: ${error.message}.`)
+      fallback(`ИИ HR не выполнил анализ: внешний сервис вернул ошибку: ${error.message}.`)
     ));
   }
 
@@ -2711,7 +2711,7 @@ async function generateAiInsights(submissions, analytics, config = {}) {
   }
 
   return generateOpenAiInsights(submissions, analytics, config).catch(error => (
-    fallback(`Анализ нейросетью не выполнен: внешний нейросетевой сервис вернул ошибку: ${error.message}.`)
+    fallback(`ИИ HR не выполнил анализ: внешний сервис вернул ошибку: ${error.message}.`)
   ));
 }
 
@@ -2914,7 +2914,7 @@ async function evaluateTestAssignment(record, config) {
       const content = data.result?.alternatives?.[0]?.message?.text || "{}";
       return { mode: "yandex", ...parseAiJson(content) };
     } catch (error) {
-      return localTestAssignmentEvaluation(record, config, text, `YandexGPT вернул ошибку: ${error.message}`);
+      return localTestAssignmentEvaluation(record, config, text, `ИИ HR вернул ошибку: ${error.message}`);
     }
   }
 
@@ -2946,7 +2946,7 @@ async function evaluateTestAssignment(record, config) {
     }
   }
 
-  return localTestAssignmentEvaluation(record, config, text, "не настроен ключ YandexGPT/OpenAI");
+  return localTestAssignmentEvaluation(record, config, text, "не настроен ключ ИИ HR");
 }
 
 function normalizeInterviewDraft(payload = {}) {
@@ -3039,7 +3039,7 @@ async function evaluateInterview(record, config, interview) {
       const content = data.result?.alternatives?.[0]?.message?.text || "{}";
       return { mode: "yandex", ...parseAiJson(content) };
     } catch (error) {
-      return localInterviewEvaluation(record, config, interview, `YandexGPT вернул ошибку: ${error.message}`);
+      return localInterviewEvaluation(record, config, interview, `ИИ HR вернул ошибку: ${error.message}`);
     }
   }
 
@@ -3071,7 +3071,7 @@ async function evaluateInterview(record, config, interview) {
     }
   }
 
-  return localInterviewEvaluation(record, config, interview, "не настроен ключ YandexGPT/OpenAI");
+  return localInterviewEvaluation(record, config, interview, "не настроен ключ ИИ HR");
 }
 
 async function handleApi(req, res) {
