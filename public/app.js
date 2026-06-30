@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-29-01";
+const APP_CLIENT_VERSION = "2026-06-30-01";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -17,7 +17,7 @@ const OPERATOR = {
   email: "hr@praktiki.pro",
   dataRetention: "6 месяцев"
 };
-const ADMIN_SECTIONS = new Set(["overview", "candidates", "interview", "analytics", "hiring", "hh", "notifications", "staff", "audit"]);
+const ADMIN_SECTIONS = new Set(["overview", "candidates", "questionnaire", "interview", "analytics", "hiring", "hh", "notifications", "staff", "audit"]);
 
 let labels = {
   experienceYears: {
@@ -395,9 +395,12 @@ function vacancyCodeFromPath() {
 }
 
 function adminVacancyCodeFromHash() {
-  const match = location.hash.match(/^#admin\/([^/]+)/);
-  const value = match ? decodeURIComponent(match[1]) : "";
-  return value && !ADMIN_SECTIONS.has(value) ? value : "smm";
+  const match = location.hash.match(/^#admin\/([^/]+)(?:\/([^/]+))?/);
+  if (!match) return "smm";
+  const first = decodeURIComponent(match[1] || "");
+  const second = decodeURIComponent(match[2] || "");
+  if (ADMIN_SECTIONS.has(first)) return second || "smm";
+  return first || "smm";
 }
 
 function adminSectionFromHash() {
@@ -698,7 +701,7 @@ function aiActionTarget(text = "") {
   if (lower.includes("анкет") || lower.includes("опрос") || lower.includes("вопрос")) {
     return {
       title: "Изменение опросника",
-      section: "vacancies",
+      section: "questionnaire",
       editLabel: "Открыть опросник",
       result: "Предложение принято. Откройте редактор опросника, проверьте формулировки и сохраните изменения."
     };
@@ -766,11 +769,16 @@ function editAiActionProposal() {
   if (!proposal) return;
   const nextSection = proposal.section || "analytics";
   state.adminSection = nextSection;
-  if (nextSection === "vacancies") {
+  if (nextSection === "vacancies" || nextSection === "questionnaire") {
     state.questionnaireDraft = null;
     state.questionnaireDraftVacancyCode = "";
   }
-  history.replaceState(null, "", nextSection === "overview" ? "#admin" : `#admin/${nextSection}`);
+  const hash = nextSection === "overview"
+    ? "#admin"
+    : nextSection === "questionnaire"
+      ? `#admin/questionnaire/${encodeURIComponent(state.adminVacancyCode || "smm")}`
+      : `#admin/${nextSection}`;
+  history.replaceState(null, "", hash);
   closeAiActionProposal();
 }
 
@@ -1688,7 +1696,11 @@ function adminNavButton(section, label, iconName) {
     class: `btn ghost ${state.adminSection === section ? "active" : ""}`,
     onclick: () => {
       state.adminSection = section;
-      const hash = section === "overview" ? "#admin" : `#admin/${section}`;
+      const hash = section === "overview"
+        ? "#admin"
+        : section === "questionnaire"
+          ? `#admin/questionnaire/${encodeURIComponent(state.adminVacancyCode || "smm")}`
+          : `#admin/${section}`;
       if (location.hash !== hash) history.replaceState(null, "", hash);
       render();
     }
@@ -1724,6 +1736,7 @@ function adminSidebar() {
       el("span", { class: "admin-menu-title" }, ["Разделы"]),
       adminNavButton("overview", "Обзор", "chart"),
       adminNavButton("candidates", "Кандидаты", "list"),
+      adminNavButton("questionnaire", "Опросник", "list"),
       adminNavButton("interview", "Интервью", "user"),
       adminNavButton("analytics", "Аналитика", "chart"),
       adminNavButton("hiring", "Подобрать сотрудника", "filter"),
@@ -2129,6 +2142,14 @@ function testAssignmentSettingsPanel() {
   ]);
 }
 
+function openQuestionnaireEditor() {
+  state.adminSection = "questionnaire";
+  state.questionnaireDraft = null;
+  state.questionnaireDraftVacancyCode = "";
+  history.replaceState(null, "", `#admin/questionnaire/${encodeURIComponent(state.adminVacancyCode || "smm")}`);
+  render();
+}
+
 const QUESTION_TYPE_LABELS = {
   namePair: "Имя и фамилия",
   contactPair: "Электронная почта и телефон",
@@ -2420,6 +2441,46 @@ function questionnaireEditorPanel() {
       "У вас режим просмотра. Менять опросник может владелец или HR."
     ]),
     el("div", { class: "question-editor-list" }, draft.map((question, index) => questionEditorCard(question, index, draft.length, editable)))
+  ]);
+}
+
+function questionnaireSummaryPanel() {
+  const total = (state.config?.questions || questions || []).length;
+  const editable = canEditQuestionnaire();
+  return el("section", { class: "table-panel questionnaire-summary-panel" }, [
+    el("div", { class: "panel-head" }, [
+      el("div", {}, [
+        el("h2", {}, ["Опросник вакансии"]),
+        el("span", {}, [`Вопросов: ${total}. Редактирование вынесено на отдельный экран.`])
+      ]),
+      el("button", {
+        class: "btn primary",
+        type: "button",
+        disabled: editable ? null : "disabled",
+        onclick: openQuestionnaireEditor
+      }, ["Редактировать"])
+    ])
+  ]);
+}
+
+function questionnaireEditorView() {
+  const currentVacancyTitle = vacancyLabel(state.adminVacancyCode);
+  return el("section", { class: "questionnaire-editor-page" }, [
+    el("header", { class: "dash-header" }, [
+      el("div", {}, [
+        el("h1", {}, ["Опросник"]),
+        el("p", {}, [currentVacancyTitle])
+      ]),
+      el("button", {
+        class: "btn ghost",
+        onclick: () => {
+          state.adminSection = "vacancies";
+          history.replaceState(null, "", `#admin/${encodeURIComponent(state.adminVacancyCode || "smm")}`);
+          render();
+        }
+      }, ["Вернуться к вакансии"])
+    ]),
+    questionnaireEditorPanel()
   ]);
 }
 
@@ -4718,6 +4779,8 @@ function adminView() {
         ? bitrixNotificationsView()
       : state.adminSection === "interview"
         ? interviewWorkspaceView()
+      : state.adminSection === "questionnaire"
+        ? questionnaireEditorView()
       : state.adminSection === "analytics"
         ? analyticsDashboardView(analytics)
         : el("section", { class: "dashboard-grid" }, [
@@ -4741,7 +4804,7 @@ function adminView() {
         vacancyMetricsDashboard(analytics),
         adminQuestionnaireLinksPanel(),
         testAssignmentSettingsPanel(),
-        questionnaireEditorPanel(),
+        questionnaireSummaryPanel(),
         candidatesPanel(currentVacancyTitle),
         testRefusalsReportPanel()
       ]),
