@@ -4996,6 +4996,12 @@ h3 {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(240px, 0.75fr);
   gap: 14px;
+  align-items: start;
+}
+
+.test-settings-grid .input {
+  min-height: 70px;
+  height: 70px;
 }
 
 .named-input small {

@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-30-05";
+const APP_CLIENT_VERSION = "2026-06-30-06";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -2149,7 +2149,7 @@ function testAssignmentSettingsPanel() {
         el("small", {}, ["Если выбрать созвон или ручной режим, кандидат не получит тестовое автоматически после анкеты."])
       ]),
       el("label", { class: "named-input" }, [
-        el("span", {}, ["Порог анкеты для автоматической выдачи"]),
+        el("span", {}, ["Порог анкеты"]),
         el("input", {
           class: "input",
           type: "number",
