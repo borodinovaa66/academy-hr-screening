@@ -4589,6 +4589,15 @@ h3 {
   font-size: clamp(30px, 3vw, 44px);
 }
 
+.admin-shell .kpi.pink {
+  border-color: rgba(240, 154, 172, 0.9);
+  background: rgba(255, 254, 250, 0.94);
+}
+
+.admin-shell .kpi.pink strong {
+  color: #d86f8a;
+}
+
 .overview-metric strong {
   font-size: clamp(23px, 2vw, 30px);
   overflow-wrap: anywhere;
