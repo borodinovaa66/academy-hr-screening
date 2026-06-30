@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-30-04";
+const APP_CLIENT_VERSION = "2026-06-30-05";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -1684,10 +1684,11 @@ function loginView() {
   ]);
 }
 
-function kpi(label, value, tone = "") {
+function kpi(label, value, tone = "", note = "") {
   return el("div", { class: `kpi ${tone}` }, [
     el("span", {}, [label]),
-    el("strong", {}, [String(value)])
+    el("strong", {}, [String(value)]),
+    note ? el("em", {}, [note]) : el("em")
   ]);
 }
 
@@ -4785,6 +4786,7 @@ function adminView() {
   ensureAdminLoaded();
   const analytics = state.analytics || { total: 0, avgScore: 0, statusCounts: {}, recommendations: [], topProjectTypes: [], topTools: [], topMetrics: [], summary: "" };
   const testKpis = testAssignmentKpiCounts();
+  const testConversion = pctText(testKpis.submitted, analytics.total || 0);
   const selected = state.selected;
   const currentVacancyTitle = vacancyLabel(state.adminVacancyCode);
   const mainContent = state.adminSection === "overview"
@@ -4814,14 +4816,14 @@ function adminView() {
           ])
         ]),
         el("div", { class: "kpi-grid" }, [
-          kpi("Анкет", analytics.total),
+          kpi("Анкет заполнено", analytics.total),
           kpi("Средний балл", `${analytics.avgScore}/100`),
-          kpi("Сильные", analytics.statusCounts.green || 0, "green"),
-          kpi("Проверка", analytics.statusCounts.yellow || 0, "yellow"),
-          kpi("Резерв", analytics.statusCounts.orange || 0, "orange"),
-          kpi("Отказ", analytics.statusCounts.red || 0, "red"),
-          kpi("Тестовых сдано", testKpis.submitted, "green"),
-          kpi("Без оценки", testKpis.withoutReview, testKpis.withoutReview ? "pink" : "")
+          kpi("Сильные кандидаты", analytics.statusCounts.green || 0, "green"),
+          kpi("Ручная проверка", analytics.statusCounts.yellow || 0, "yellow", "нужно решение HR"),
+          kpi("Конверсия в тестовые", testConversion, "", `${testKpis.submitted} из ${analytics.total || 0} анкет`),
+          kpi("Не прошли анкету", analytics.statusCounts.red || 0, "red", "низкая оценка или стоп-факторы"),
+          kpi("Тестовых сдано", testKpis.submitted, "green", "кандидаты прикрепили результат"),
+          kpi("Без оценки", testKpis.withoutReview, testKpis.withoutReview ? "pink" : "", "ожидают проверки руководителем")
         ]),
         statusBar(analytics),
         vacancyMetricsDashboard(analytics),
