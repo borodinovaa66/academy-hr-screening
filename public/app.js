@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-06-30-06";
+const APP_CLIENT_VERSION = "2026-07-22-01";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -1754,6 +1754,13 @@ function adminVacancyButton(code, vacancy) {
 
 function adminSidebar() {
   const vacancies = Object.entries(state.vacancies || {});
+  const fallbackVacancies = [
+    ["smm", { adminTitle: "SMM-менеджер" }],
+    ["project-manager", { adminTitle: "Менеджер проектов" }]
+  ];
+  const vacancyItems = vacancies.length ? vacancies : fallbackVacancies;
+  const activeVacancy = vacancyItems.find(([code]) => code === state.adminVacancyCode)?.[1];
+  const activeVacancyTitle = activeVacancy?.adminTitle || activeVacancy?.title || "выберите вакансию";
   return el("aside", { class: "admin-sidebar" }, [
     el("div", { class: "admin-menu-group" }, [
       el("span", { class: "admin-menu-title" }, ["Разделы"]),
@@ -1770,11 +1777,14 @@ function adminSidebar() {
         adminNavButton("audit", "Журнал", "list")
       ] : [])
     ]),
-    el("div", { class: "admin-menu-group" }, [
-      el("span", { class: "admin-menu-title" }, ["Вакансии"]),
-      ...(vacancies.length ? vacancies.map(([code, vacancy]) => adminVacancyButton(code, vacancy)) : [
-        adminVacancyButton("smm", { adminTitle: "SMM-менеджер" }),
-        adminVacancyButton("project-manager", { adminTitle: "Менеджер проектов" })
+    el("details", { class: "admin-menu-group admin-vacancy-picker" }, [
+      el("summary", {}, [
+        el("span", { class: "admin-menu-title" }, ["Вакансии в работе"]),
+        el("strong", {}, [activeVacancyTitle]),
+        iconEl("arrow")
+      ]),
+      el("div", { class: "admin-vacancy-list" }, [
+        ...vacancyItems.map(([code, vacancy]) => adminVacancyButton(code, vacancy))
       ])
     ])
   ]);
