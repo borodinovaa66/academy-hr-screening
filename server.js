@@ -1569,6 +1569,9 @@ function normalizeHhVacancyMetrics(data = {}) {
     views,
     responses,
     archived: Boolean(data.archived),
+    archivedAt: data.archived_at || data.archivedAt || null,
+    closedForApplicants: Boolean(data.closed_for_applicants || data.closedForApplicants),
+    expiresAt: data.expires_at || data.expiresAt || null,
     published: Boolean(data.published_at || data.publishedAt),
     name: data.name || "",
     area: data.area?.name || "",
@@ -2287,12 +2290,22 @@ async function syncHhPublicationMetrics(publication) {
   try {
     const vacancy = await hhApi(`/vacancies/${encodeURIComponent(publication.hhVacancyId)}`);
     const metrics = normalizeHhVacancyMetrics(vacancy);
+    const isClosed = metrics.archived || metrics.closedForApplicants;
+    const previousLifecycle = publication.payload?.hhLifecycle || {};
+    const closedAt = isClosed
+      ? (metrics.archivedAt || previousLifecycle.closedAt || metrics.fetchedAt)
+      : null;
     return updateHhPublication(publication.id, {
       url: publication.url || metrics.alternateUrl || "",
-      status: metrics.archived ? "archived" : (publication.status || "published"),
+      status: metrics.archived ? "archived" : (metrics.closedForApplicants ? "closed" : "published"),
       publishedAt: publication.publishedAt || vacancy.published_at || vacancy.created_at || null,
       payload: {
         hhMetrics: metrics,
+        hhLifecycle: {
+          openedAt: publication.publishedAt || vacancy.published_at || vacancy.created_at || previousLifecycle.openedAt || null,
+          closedAt,
+          checkedAt: metrics.fetchedAt
+        },
         hhVacancy: {
           id: publication.hhVacancyId,
           name: metrics.name,
@@ -3884,6 +3897,13 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/hh-publications") {
+    const refreshVacancyCode = String(url.searchParams.get("vacancy") || "").trim();
+    if (url.searchParams.get("refresh") === "1" && refreshVacancyCode && canManageVacancy(adminSession, refreshVacancyCode)) {
+      const publicationsToRefresh = listHhPublications().filter(item =>
+        item.vacancyCode === refreshVacancyCode && item.hhVacancyId
+      );
+      await Promise.all(publicationsToRefresh.map(item => syncHhPublicationMetrics(item)));
+    }
     return sendJson(res, 200, {
       publications: filterByVacancyAccess(adminSession, listHhPublications(), item => item.vacancyCode)
     });

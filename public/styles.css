@@ -4612,6 +4612,76 @@ h3 {
   line-height: 1.42;
 }
 
+.admin-shell .vacancy-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 310px);
+  gap: 24px;
+  align-items: start;
+}
+
+.vacancy-lifecycle-card {
+  display: grid;
+  gap: 6px;
+  min-height: 118px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.9);
+}
+
+.vacancy-lifecycle-card strong {
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.vacancy-lifecycle-card span,
+.vacancy-lifecycle-card b,
+.vacancy-lifecycle-card em {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.vacancy-lifecycle-card b {
+  font-weight: 700;
+}
+
+.vacancy-lifecycle-card em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.vacancy-lifecycle-card.open {
+  border-color: rgba(33, 124, 131, 0.38);
+  border-left-color: #217c83;
+}
+
+.vacancy-lifecycle-card.open strong {
+  color: #12656b;
+}
+
+.vacancy-lifecycle-card.closed {
+  border-color: rgba(216, 111, 138, 0.6);
+  border-left-color: #d86f8a;
+}
+
+.vacancy-lifecycle-card.closed strong,
+.vacancy-lifecycle-card.closed span {
+  color: #b73e5f;
+}
+
+.vacancy-lifecycle-card.preparing {
+  border-left-color: #d4a83a;
+}
+
+.vacancy-lifecycle-card.unknown {
+  border-left-color: #8b8b86;
+}
+
+.vacancy-lifecycle-card :empty {
+  display: none;
+}
+
 .admin-shell .badge {
   min-height: 38px;
   padding: 0 16px;
@@ -5235,6 +5305,14 @@ h3 {
 }
 
 @media (max-width: 980px) {
+  .admin-shell .vacancy-page-header {
+    grid-template-columns: 1fr;
+  }
+
+  .vacancy-lifecycle-card {
+    width: min(100%, 420px);
+  }
+
   .test-review-grid,
   .telegram-draft-grid,
   .channel-metrics-grid,

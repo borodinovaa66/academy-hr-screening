@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-07-22-01";
+const APP_CLIENT_VERSION = "2026-07-22-02";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -1510,7 +1510,7 @@ async function loadAdmin() {
     fetch("/api/admin/hiring-requests"),
     fetch("/api/admin/vacancy-openings"),
     fetch("/api/admin/hh-texts"),
-    fetch("/api/admin/hh-publications"),
+    fetch(`/api/admin/hh-publications?vacancy=${vacancy}&refresh=1`),
     fetch("/api/admin/hh/status"),
     fetch("/api/admin/hh/promotion-status"),
     fetch("/api/admin/hh/responses"),
@@ -2529,6 +2529,102 @@ function metricValue(value) {
 function selectedVacancyHhPublications() {
   const code = state.adminVacancyCode || "smm";
   return (state.hhPublications || []).filter(item => item.vacancyCode === code);
+}
+
+function dateTimestamp(value) {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function formatDateLong(value) {
+  if (!value) return "дата не указана";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "дата не указана";
+  return date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  });
+}
+
+function calendarDaysSince(value) {
+  const start = value ? new Date(value) : null;
+  if (!start || Number.isNaN(start.getTime())) return null;
+  const today = new Date();
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.max(0, Math.floor((todayDay.getTime() - startDay.getTime()) / 86400000));
+}
+
+function vacancyLifecycleInfo() {
+  const code = state.adminVacancyCode || "smm";
+  const publication = selectedVacancyHhPublications()
+    .filter(item => item.hhVacancyId)
+    .sort((a, b) => dateTimestamp(b.publishedAt || b.createdAt) - dateTimestamp(a.publishedAt || a.createdAt))[0];
+  if (publication) {
+    const metrics = publication.payload?.hhMetrics || {};
+    const lifecycle = publication.payload?.hhLifecycle || {};
+    const normalizedStatus = String(publication.status || "").toLowerCase();
+    const closed = metrics.archived || metrics.closedForApplicants || ["archived", "closed", "cancelled"].includes(normalizedStatus);
+    const openedAt = lifecycle.openedAt || publication.publishedAt || publication.createdAt;
+    if (closed) {
+      return {
+        code: "closed",
+        title: "Вакансия закрыта",
+        dateLabel: "Дата закрытия",
+        date: lifecycle.closedAt || metrics.archivedAt || metrics.expiresAt || publication.updatedAt,
+        source: "Статус подтвержден HeadHunter"
+      };
+    }
+    const days = calendarDaysSince(openedAt);
+    return {
+      code: "open",
+      title: "Вакансия открыта",
+      dateLabel: "Открыта",
+      date: openedAt,
+      days,
+      source: "Опубликована на HeadHunter"
+    };
+  }
+
+  const opening = (state.vacancyOpenings || [])
+    .filter(item => item.vacancyCode === code)
+    .sort((a, b) => dateTimestamp(b.createdAt) - dateTimestamp(a.createdAt))[0];
+  if (opening && ["closed", "cancelled"].includes(String(opening.status || "").toLowerCase())) {
+    return {
+      code: "closed",
+      title: "Вакансия закрыта",
+      dateLabel: "Дата закрытия",
+      date: opening.updatedAt,
+      source: "Подбор закрыт на платформе"
+    };
+  }
+  if (opening) {
+    return {
+      code: "preparing",
+      title: "Готовится к публикации",
+      source: "На HeadHunter еще не опубликована"
+    };
+  }
+  return {
+    code: "unknown",
+    title: "Статус не определен",
+    source: "Публикация HeadHunter не подключена"
+  };
+}
+
+function vacancyLifecycleCard() {
+  const info = vacancyLifecycleInfo();
+  const dayText = info.days === null || info.days === undefined
+    ? ""
+    : `${info.days} ${pluralRu(info.days, "день", "дня", "дней")} в работе`;
+  return el("aside", { class: `vacancy-lifecycle-card ${info.code}` }, [
+    el("strong", {}, [info.title]),
+    info.date ? el("span", {}, [`${info.dateLabel}: ${formatDateLong(info.date)}`]) : el("span"),
+    dayText ? el("b", {}, [dayText]) : el("b"),
+    el("em", {}, [info.source])
+  ]);
 }
 
 function selectedVacancyHhResponses() {
@@ -4819,11 +4915,12 @@ function adminView() {
         ? analyticsDashboardView(analytics)
         : el("section", { class: "dashboard-grid" }, [
       el("div", { class: "dashboard-main" }, [
-        el("header", { class: "dash-header" }, [
+        el("header", { class: "dash-header vacancy-page-header" }, [
           el("div", {}, [
             el("h1", {}, [state.adminSection === "vacancies" ? currentVacancyTitle : "Кандидаты"]),
             state.adminSection === "vacancies" ? el("div") : el("p", {}, ["Сводка по кандидатам и этапам отбора."])
-          ])
+          ]),
+          state.adminSection === "vacancies" ? vacancyLifecycleCard() : el("div")
         ]),
         el("div", { class: "kpi-grid" }, [
           kpi("Анкет заполнено", analytics.total),
