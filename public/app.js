@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-07-22-02";
+const APP_CLIENT_VERSION = "2026-07-22-03";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -1529,9 +1529,14 @@ async function loadAdmin() {
   }
   const subsData = await subs.json();
   const analyticsData = await analytics.json();
-  state.submissions = subsData.submissions;
+  const responseVacancyCode = subsData.vacancyCode || analyticsData.vacancyCode || state.adminVacancyCode;
+  const receivedSubmissions = Array.isArray(subsData.submissions) ? subsData.submissions : [];
+  state.submissions = globalThis.HrVacancyState.filterSubmissionsByVacancy(receivedSubmissions, responseVacancyCode);
+  if (state.submissions.length !== receivedSubmissions.length) {
+    console.warn("Из ответа исключены анкеты, относящиеся к другой вакансии.");
+  }
   state.analytics = analyticsData.analytics;
-  state.adminVacancyCode = subsData.vacancyCode || analyticsData.vacancyCode || state.adminVacancyCode;
+  state.adminVacancyCode = responseVacancyCode;
   if (configResponse?.ok) {
     const configData = await configResponse.json();
     state.adminConfigRoot = configData.config || state.adminConfigRoot;
@@ -1752,15 +1757,45 @@ function adminVacancyButton(code, vacancy) {
   }, [vacancy.adminTitle || vacancy.title || code]);
 }
 
+const VACANCY_STATE_LABELS = {
+  ready: { label: "Готовая вакансия", tone: "neutral" },
+  draft: { label: "Черновик", tone: "yellow" },
+  recruiting: { label: "Подбор идёт", tone: "green" },
+  closed: { label: "Подбор закрыт", tone: "red" },
+  archive: { label: "Архив", tone: "red" }
+};
+
+function vacancyWorkflowState(code, vacancy = state.vacancies?.[code] || {}) {
+  return globalThis.HrVacancyState.resolveVacancyState({
+    code,
+    vacancy,
+    openings: state.vacancyOpenings || [],
+    publications: state.hhPublications || [],
+    texts: state.hhTexts || []
+  });
+}
+
+function vacancyStateLabel(code, vacancy) {
+  const info = vacancyWorkflowState(code, vacancy);
+  return { ...info, ...(VACANCY_STATE_LABELS[info.code] || VACANCY_STATE_LABELS.ready) };
+}
+
+function vacanciesWithState() {
+  return Object.entries(state.vacancies || {}).map(([code, vacancy]) => ({
+    code,
+    vacancy,
+    state: vacancyStateLabel(code, vacancy)
+  }));
+}
+
 function adminSidebar() {
-  const vacancies = Object.entries(state.vacancies || {});
-  const fallbackVacancies = [
-    ["smm", { adminTitle: "SMM-менеджер" }],
-    ["project-manager", { adminTitle: "Менеджер проектов" }]
-  ];
-  const vacancyItems = vacancies.length ? vacancies : fallbackVacancies;
-  const activeVacancy = vacancyItems.find(([code]) => code === state.adminVacancyCode)?.[1];
-  const activeVacancyTitle = activeVacancy?.adminTitle || activeVacancy?.title || "выберите вакансию";
+  const vacancyItems = vacanciesWithState().filter(item => item.state.code === "recruiting");
+  const activeVacancy = vacancyItems.find(item => item.code === state.adminVacancyCode)?.vacancy;
+  const activeVacancyTitle = activeVacancy?.adminTitle || activeVacancy?.title || (
+    vacancyItems.length
+      ? `${vacancyItems.length} ${pluralRu(vacancyItems.length, "вакансия", "вакансии", "вакансий")}`
+      : "Нет вакансий"
+  );
   return el("aside", { class: "admin-sidebar" }, [
     el("div", { class: "admin-menu-group" }, [
       el("span", { class: "admin-menu-title" }, ["Разделы"]),
@@ -1784,7 +1819,9 @@ function adminSidebar() {
         iconEl("arrow")
       ]),
       el("div", { class: "admin-vacancy-list" }, [
-        ...vacancyItems.map(([code, vacancy]) => adminVacancyButton(code, vacancy))
+        ...(vacancyItems.length
+          ? vacancyItems.map(item => adminVacancyButton(item.code, item.vacancy))
+          : [el("span", { class: "admin-vacancy-empty" }, ["Подбор сейчас не ведётся."])])
       ])
     ])
   ]);
@@ -1800,7 +1837,24 @@ function pluralRu(number, one, few, many) {
 }
 
 function activeOpeningCount() {
-  return (state.vacancyOpenings || []).filter(item => !["closed", "cancelled"].includes(item.status)).length;
+  return vacanciesWithState().filter(item => item.state.code === "recruiting").length;
+}
+
+function activeOpeningItems() {
+  const activeCodes = new Set(
+    vacanciesWithState()
+      .filter(item => item.state.code === "recruiting")
+      .map(item => item.code)
+  );
+  const latestByVacancy = new Map();
+  (state.vacancyOpenings || []).forEach(opening => {
+    if (!activeCodes.has(opening.vacancyCode)) return;
+    const current = latestByVacancy.get(opening.vacancyCode);
+    if (!current || dateTimestamp(opening.updatedAt || opening.createdAt) > dateTimestamp(current.updatedAt || current.createdAt)) {
+      latestByVacancy.set(opening.vacancyCode, opening);
+    }
+  });
+  return [...latestByVacancy.values()];
 }
 
 function overviewMetric(label, value, note = "", tone = "") {
@@ -1811,11 +1865,10 @@ function overviewMetric(label, value, note = "", tone = "") {
   ]);
 }
 
-function overviewVacancyCard(code, vacancy) {
+function overviewVacancyCard(code, vacancy, stateInfo = vacancyStateLabel(code, vacancy)) {
   const title = vacancy.adminTitle || vacancy.title || code;
   const url = questionnaireUrl(code);
-  const status = vacancy.active === false ? "приостановлена" : "активна";
-  return el("div", { class: `overview-vacancy-card ${vacancy.active === false ? "paused" : ""}` }, [
+  return el("div", { class: `overview-vacancy-card ${stateInfo.code}` }, [
     el("div", {}, [
       el("strong", {}, [title]),
       el("span", {}, [`Опросник: /v/${code}`])
@@ -1844,7 +1897,7 @@ function overviewVacancyCard(code, vacancy) {
         onclick: () => copyToClipboard(url, `Ссылка на опросник "${title}" скопирована.`)
       }, [iconEl("copy"), "Ссылка"])
     ]),
-    el("div", { class: `status-pill ${vacancy.active === false ? "red" : "green"}` }, [status])
+    el("div", { class: `status-pill ${stateInfo.tone}` }, [stateInfo.label])
   ]);
 }
 
@@ -2006,8 +2059,10 @@ function platformAssistantPanel() {
 }
 
 function adminOverviewView() {
-  const vacancies = Object.entries(state.vacancies || {});
-  const activeVacancies = vacancies.filter(([, vacancy]) => vacancy.active !== false).length;
+  const vacancies = vacanciesWithState();
+  const workingVacancies = vacancies.filter(item => item.state.code === "recruiting");
+  const otherVacancies = vacancies.filter(item => item.state.code !== "recruiting");
+  const activeVacancies = workingVacancies.length;
   const openings = activeOpeningCount();
   const hhConnected = Boolean(state.hhStatus?.account?.connected);
   const staffCount = state.adminUsers?.length || 0;
@@ -2021,7 +2076,7 @@ function adminOverviewView() {
       ])
     ]),
     el("div", { class: "overview-metrics" }, [
-      overviewMetric("Вакансий в системе", vacancies.length || 0, `${activeVacancies} ${pluralRu(activeVacancies, "активная", "активные", "активных")}`, "green"),
+      overviewMetric("Вакансий в системе", vacancies.length || 0, `${activeVacancies} ${pluralRu(activeVacancies, "в работе", "в работе", "в работе")}`, "green"),
       overviewMetric("Подбор сотрудников", openings, openings ? "есть активные запросы" : "активных подборов нет", "yellow"),
       overviewMetric("Текущая воронка", currentVacancy, "для детальной аналитики и кандидатов"),
       overviewMetric("HeadHunter", hhConnected ? "подключен" : "не подключен", hhConnected ? "можно синхронизировать отклики" : "можно подготовить ручную публикацию", hhConnected ? "green" : "red"),
@@ -2032,7 +2087,18 @@ function adminOverviewView() {
         el("h2", {}, ["Вакансии в работе"]),
         el("span", {}, ["Откройте конкретную вакансию, чтобы увидеть кандидатов, аналитику и ссылку на опросник."])
       ]),
-      vacancies.length ? el("div", { class: "overview-vacancy-grid" }, vacancies.map(([code, vacancy]) => overviewVacancyCard(code, vacancy))) : el("div", { class: "empty" }, ["Пока нет заведенных вакансий."])
+      workingVacancies.length
+        ? el("div", { class: "overview-vacancy-grid" }, workingVacancies.map(item => overviewVacancyCard(item.code, item.vacancy, item.state)))
+        : el("div", { class: "empty" }, ["Сейчас нет вакансий с действующим подбором."])
+    ]),
+    el("section", { class: "overview-section" }, [
+      el("div", { class: "panel-head" }, [
+        el("h2", {}, ["Справочник и история"]),
+        el("span", {}, ["Готовые вакансии, черновики, закрытые позиции и архив."])
+      ]),
+      otherVacancies.length
+        ? el("div", { class: "overview-vacancy-grid" }, otherVacancies.map(item => overviewVacancyCard(item.code, item.vacancy, item.state)))
+        : el("div", { class: "empty" }, ["Других вакансий пока нет."])
     ]),
     platformAssistantPanel(),
     vacancyDuplicateAnalysisPanel(),
@@ -2559,58 +2625,53 @@ function calendarDaysSince(value) {
 
 function vacancyLifecycleInfo() {
   const code = state.adminVacancyCode || "smm";
-  const publication = selectedVacancyHhPublications()
-    .filter(item => item.hhVacancyId)
-    .sort((a, b) => dateTimestamp(b.publishedAt || b.createdAt) - dateTimestamp(a.publishedAt || a.createdAt))[0];
-  if (publication) {
-    const metrics = publication.payload?.hhMetrics || {};
-    const lifecycle = publication.payload?.hhLifecycle || {};
-    const normalizedStatus = String(publication.status || "").toLowerCase();
-    const closed = metrics.archived || metrics.closedForApplicants || ["archived", "closed", "cancelled"].includes(normalizedStatus);
-    const openedAt = lifecycle.openedAt || publication.publishedAt || publication.createdAt;
-    if (closed) {
-      return {
-        code: "closed",
-        title: "Вакансия закрыта",
-        dateLabel: "Дата закрытия",
-        date: lifecycle.closedAt || metrics.archivedAt || metrics.expiresAt || publication.updatedAt,
-        source: "Статус подтвержден HeadHunter"
-      };
-    }
-    const days = calendarDaysSince(openedAt);
+  const vacancy = state.vacancies?.[code] || {};
+  const workflow = vacancyWorkflowState(code, vacancy);
+  const publication = workflow.publication;
+  const opening = workflow.opening;
+  const metrics = publication?.payload?.hhMetrics || {};
+  const lifecycle = publication?.payload?.hhLifecycle || {};
+
+  if (workflow.code === "recruiting") {
+    const openedAt = lifecycle.openedAt || publication?.publishedAt || opening?.createdAt;
     return {
       code: "open",
       title: "Вакансия открыта",
       dateLabel: "Открыта",
       date: openedAt,
-      days,
-      source: "Опубликована на HeadHunter"
+      days: calendarDaysSince(openedAt),
+      source: publication ? "Опубликована на HeadHunter" : "Подбор идёт без публикации на HeadHunter"
     };
   }
-
-  const opening = (state.vacancyOpenings || [])
-    .filter(item => item.vacancyCode === code)
-    .sort((a, b) => dateTimestamp(b.createdAt) - dateTimestamp(a.createdAt))[0];
-  if (opening && ["closed", "cancelled"].includes(String(opening.status || "").toLowerCase())) {
+  if (workflow.code === "closed") {
     return {
       code: "closed",
       title: "Вакансия закрыта",
       dateLabel: "Дата закрытия",
-      date: opening.updatedAt,
-      source: "Подбор закрыт на платформе"
+      date: lifecycle.closedAt || metrics.expiresAt || publication?.updatedAt || opening?.updatedAt,
+      source: publication ? "Статус подтверждён HeadHunter" : "Подбор закрыт на платформе"
     };
   }
-  if (opening) {
+  if (workflow.code === "archive") {
+    return {
+      code: "closed",
+      title: "Вакансия в архиве",
+      dateLabel: "Дата архивации",
+      date: lifecycle.closedAt || metrics.archivedAt || publication?.updatedAt || opening?.updatedAt,
+      source: publication ? "Архив HeadHunter" : "Перенесена в архив платформы"
+    };
+  }
+  if (workflow.code === "draft") {
     return {
       code: "preparing",
-      title: "Готовится к публикации",
-      source: "На HeadHunter еще не опубликована"
+      title: "Черновик вакансии",
+      source: "Требуется проверка перед запуском подбора"
     };
   }
   return {
-    code: "unknown",
-    title: "Статус не определен",
-    source: "Публикация HeadHunter не подключена"
+    code: "ready",
+    title: "Готовая вакансия",
+    source: "Подбор не запущен"
   };
 }
 
@@ -4424,6 +4485,7 @@ function vacancyCreatedDialog() {
 
 function hiringDashboardView() {
   const canCreateOpening = canStartRecruitment();
+  const activeOpenings = activeOpeningItems();
   return el("section", { class: "staff-page" }, [
     el("header", { class: "dash-header" }, [
       el("div", {}, [
@@ -4468,8 +4530,8 @@ function hiringDashboardView() {
       ])) : [el("div", { class: "empty" }, ["Заявок пока нет."])])
     ]),
     el("section", { class: "table-panel" }, [
-      el("div", { class: "panel-head" }, [el("h2", {}, ["Активные подборы"]), el("span", {}, [`Всего: ${state.vacancyOpenings.length}`])]),
-      ...(state.vacancyOpenings.length ? state.vacancyOpenings.map(openingCard) : [el("div", { class: "empty" }, ["Активных подборов пока нет."])])
+      el("div", { class: "panel-head" }, [el("h2", {}, ["Активные подборы"]), el("span", {}, [`Всего: ${activeOpenings.length}`])]),
+      ...(activeOpenings.length ? activeOpenings.map(openingCard) : [el("div", { class: "empty" }, ["Активных подборов пока нет."])])
     ])
   ]);
 }

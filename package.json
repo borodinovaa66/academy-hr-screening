@@ -4,7 +4,8 @@
   "private": true,
   "description": "MVP SaaS questionnaire for HR screening of SMM manager candidates.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=22"
