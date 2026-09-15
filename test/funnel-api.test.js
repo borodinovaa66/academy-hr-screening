@@ -87,7 +87,7 @@ test("HTTP reads require session, enforce launch access and preserve legacy APIs
   assert.equal(detail.body.funnel.readiness.approvedCount, 0);
   assert.equal(detail.body.funnel.legacyStatus, "draft");
   assert.equal(detail.headers.get("cache-control"), "private, no-store");
-  assert.equal((await request(`/api/admin/funnels/${id}/launch`, owner, "POST", {})).status, 404);
+  assert.equal((await request(`/api/admin/funnels/${id}/launch`, owner, "POST", {})).status, 403);
   assert.equal((await request("/api/admin/vacancy-openings", owner)).body.openings.length, 2);
   assert.equal((await request("/api/config?vacancy=smm")).status, 200);
   assert.equal((await request("/api/vacancies")).status, 200);

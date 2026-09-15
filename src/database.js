@@ -5,11 +5,13 @@ const { DatabaseSync } = require("node:sqlite");
 const { defaultConfig } = require("./defaultConfig");
 const funnelStore = require("./funnelStore");
 const funnelArtifacts = require("./funnelArtifacts");
+const funnelLaunch = require("./funnelLaunch");
 
 const dataDir = process.env.HR_DATA_DIR || path.join(__dirname, "..", "data");
 const sqlitePath = path.join(dataDir, "hr-screening.sqlite");
 
 let db;
+let launchService;
 
 function json(value) {
   return JSON.stringify(value);
@@ -415,6 +417,9 @@ async function initDb({
   funnelStore.migrateFunnelSchema(db);
   funnelArtifacts.migrateArtifactWorkflow(db);
   refreshLegacyFunnels();
+  funnelLaunch.migrateFunnelLaunch(db);
+  launchService = funnelLaunch.createLaunchService(db);
+  launchService.failPendingAfterRestart();
 }
 
 function refreshLegacyFunnels() {
@@ -440,6 +445,12 @@ function readCurrentFunnelArtifact(session, funnelId, type) {
 function mutateFunnelArtifact(session, funnelId, type, action, payload, key) {
   return funnelArtifacts.mutateArtifact(db, session, funnelId, type, action, payload, key);
 }
+
+function launchFunnel(session, funnelId, payload, key) {
+  return launchService.launch(session, funnelId, payload, key);
+}
+
+function getShowcaseCatalog() { return funnelLaunch.showcaseCatalog(db); }
 
 function getUser(id) {
   const row = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
@@ -1379,6 +1390,8 @@ function upsertTelegramLink(record) {
 }
 
 module.exports = {
+  launchFunnel,
+  getShowcaseCatalog,
   readCurrentFunnelArtifact,
   mutateFunnelArtifact,
   funnelMigrationSummary,
