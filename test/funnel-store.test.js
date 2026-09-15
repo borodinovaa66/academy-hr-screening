@@ -130,6 +130,10 @@ test("changing the legacy external ID detaches the old channel instead of leavin
   assert.equal(funnel.activeChannels.length, 1);
   assert.equal(funnel.activeChannels[0].externalId, "456");
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM funnel_legacy_publications").get().n, 1);
+  db.exec("UPDATE hh_publications SET hh_vacancy_id = '123'");
+  syncLegacyFunnels(db, config);
+  assert.equal(getFunnel(db, "a", owner).activeChannels.length, 1);
+  assert.equal(getFunnel(db, "a", owner).activeChannels[0].externalId, "123");
 });
 
 test("text from another launch is not borrowed and template alone does not create a funnel", t => {

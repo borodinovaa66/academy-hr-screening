@@ -165,7 +165,7 @@ function syncLegacyFunnels(db, config) {
           VALUES (?, ?, 'headhunter', ?, ?, ?, ?, ?, ?)`).run(channelId, ids[0], publication.status, externalStatus, externalId, publication.url, verified ? metrics.fetchedAt : null, channelPayload);
         changed = true;
       } else if (parse(existing.payload_json).adapter === "legacy" &&
-        (!existing.last_synced_at || (verified && metrics.fetchedAt > existing.last_synced_at)) &&
+        (!existing.last_synced_at || (verified && metrics.fetchedAt >= existing.last_synced_at)) &&
         (existing.status !== publication.status || existing.external_status !== externalStatus || existing.url !== publication.url || existing.last_synced_at !== (verified ? metrics.fetchedAt : null))) {
         db.prepare(`UPDATE funnel_channels SET status = ?, external_status = ?, url = ?, last_synced_at = ?, payload_json = ? WHERE id = ?`)
           .run(publication.status, externalStatus, publication.url, verified ? metrics.fetchedAt : null, channelPayload, channelId);
