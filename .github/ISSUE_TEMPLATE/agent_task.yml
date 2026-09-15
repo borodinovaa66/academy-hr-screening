@@ -1,13 +1,22 @@
 name: Задача от агента
-description: Единый шаблон задачи от маркетолога, продакт-менеджера, дизайнера или другого агента
+description: Техническая задача, связанная с карточкой межролевой координации
 title: "[Агент] "
 labels: ["agent-task", "needs-dev"]
 body:
+  - type: input
+    id: coordination_card
+    attributes:
+      label: Карточка координационной доски
+      description: Идентификатор передачи из docs/agent-team/06_COORDINATION_BOARD.md
+      placeholder: HR-XFER-YYYYMMDD-NN
+    validations:
+      required: true
   - type: dropdown
     id: role
     attributes:
       label: Роль агента
       options:
+        - Методолог
         - Маркетолог
         - Продакт-менеджер
         - Дизайнер интерфейса
@@ -77,4 +86,3 @@ body:
       description: Что важно не сломать, чего нельзя делать
     validations:
       required: false
-

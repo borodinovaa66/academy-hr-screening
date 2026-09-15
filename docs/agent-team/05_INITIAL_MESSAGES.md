@@ -10,7 +10,9 @@
 Это не учебная задача, а рабочий продукт, который мы хотим развивать как самостоятельный коммерческий SaaS.
 
 Сначала изучи:
+- D:\Codex\HR\AGENTS.md
 - D:\Codex\HR\docs\agent-team\00_AGENT_TEAM_BRIEF.md
+- D:\Codex\HR\docs\agent-team\06_COORDINATION_BOARD.md
 - D:\Codex\HR\docs\agent-team\04_TASK_HANDOFF_TO_DEVELOPMENT.md
 - профильный бриф своей роли в D:\Codex\HR\docs\agent-team\
 
@@ -18,6 +20,9 @@
 https://github.com/borodinovaa66/academy-hr-screening
 
 Используй шаблон Agent task.
+
+Передачу любой другой роли сначала зафиксируй карточкой в:
+D:\Codex\HR\docs\agent-team\06_COORDINATION_BOARD.md
 
 Важно:
 - интерфейсные тексты для русских пользователей писать по-русски;
@@ -33,7 +38,9 @@ https://github.com/borodinovaa66/academy-hr-screening
 Твоя задача - подготовить продукт к выводу на рынок как самостоятельного платного решения.
 
 Сначала изучи:
+- D:\Codex\HR\AGENTS.md
 - D:\Codex\HR\docs\agent-team\00_AGENT_TEAM_BRIEF.md
+- D:\Codex\HR\docs\agent-team\06_COORDINATION_BOARD.md
 - D:\Codex\HR\docs\agent-team\01_MARKETING_AGENT_BRIEF.md
 - D:\Codex\HR\docs\agent-team\04_TASK_HANDOFF_TO_DEVELOPMENT.md
 - D:\Codex\HR\docs\HIRING_PROCESS_V1.md
@@ -56,7 +63,9 @@ https://github.com/borodinovaa66/academy-hr-screening
 Твоя задача - превратить текущий MVP в управляемый коммерческий продукт: сегменты, сценарии, метрики, дорожная карта, приоритеты и требования к релизам.
 
 Сначала изучи:
+- D:\Codex\HR\AGENTS.md
 - D:\Codex\HR\docs\agent-team\00_AGENT_TEAM_BRIEF.md
+- D:\Codex\HR\docs\agent-team\06_COORDINATION_BOARD.md
 - D:\Codex\HR\docs\agent-team\02_PRODUCT_MANAGER_AGENT_BRIEF.md
 - D:\Codex\HR\docs\agent-team\04_TASK_HANDOFF_TO_DEVELOPMENT.md
 - D:\Codex\HR\docs\HIRING_PROCESS_V1.md
@@ -79,7 +88,9 @@ https://github.com/borodinovaa66/academy-hr-screening
 Твоя задача - улучшать пользовательский опыт кандидата, HR и руководителя-заказчика, сохраняя текущий стиль: белый фон, черный шрифт, редкие мягкие пастельные акценты, строгая рабочая админка, дружелюбный кандидатский чат.
 
 Сначала изучи:
+- D:\Codex\HR\AGENTS.md
 - D:\Codex\HR\docs\agent-team\00_AGENT_TEAM_BRIEF.md
+- D:\Codex\HR\docs\agent-team\06_COORDINATION_BOARD.md
 - D:\Codex\HR\docs\agent-team\03_DESIGN_AGENT_BRIEF.md
 - D:\Codex\HR\docs\agent-team\04_TASK_HANDOFF_TO_DEVELOPMENT.md
 - D:\Codex\HR\docs\HR_Screening_User_Guide.pdf
@@ -94,4 +105,3 @@ https://github.com/borodinovaa66/academy-hr-screening
 
 Не пиши абстрактно "улучшить дизайн". Нужны конкретные экраны, состояния, тексты, компоненты и критерии приемки.
 ```
-
