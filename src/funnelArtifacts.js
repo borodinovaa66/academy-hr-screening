@@ -73,13 +73,17 @@ function currentArtifact(db, funnelId, type) {
   return db.prepare("SELECT * FROM funnel_artifacts WHERE funnel_id = ? AND artifact_type = ? ORDER BY version DESC LIMIT 1").get(funnelId, type);
 }
 
-function approvalGroups(db, type) {
+function approvalGroups(db, type, { required = true } = {}) {
   const stored = db.prepare("SELECT value_json FROM configs WHERE key = 'funnel_approval_policy'").get();
   let policy;
   try { policy = stored ? JSON.parse(stored.value_json) : defaultApprovalGroups; }
-  catch { fail(409, "invalid_approval_policy", "Матрица утверждения повреждена. Обратитесь к владельцу."); }
+  catch {
+    if (!required) return null;
+    fail(409, "invalid_approval_policy", "Матрица утверждения повреждена. Обратитесь к владельцу.");
+  }
   const groups = policy?.[type];
   if (!Array.isArray(groups) || groups.length !== 1 || groups.some(group => !Array.isArray(group) || !group.length || group.some(role => !["owner", "hr", "hiring_manager"].includes(role)))) {
+    if (!required) return null;
     fail(409, "invalid_approval_policy", "Матрица утверждения не настроена. Обратитесь к владельцу.");
   }
   return groups;
@@ -121,13 +125,14 @@ function readCurrentArtifact(db, session, funnelId, type) {
   const funnel = getFunnel(db, funnelId, actor);
   if (!funnel) fail(404, "funnel_not_found", "Воронка не найдена или недоступна.");
   const artifact = currentArtifact(db, funnelId, type);
+  const groups = approvalGroups(db, type, { required: false });
   return {
     funnelVersion: funnel.version,
     artifact: funnel.artifacts.find(item => item.type === type),
     profileVersion: artifact?.profile_version ?? null,
     reviewCycle: artifact?.review_cycle ?? 0,
     criteriaVersion: CRITERIA_VERSION, requiredCriteria: criteria[type],
-    approvalGroups: approvalGroups(db, type),
+    approvalGroups: groups || [], approvalPolicyValid: Boolean(groups),
     approvals: artifact ? db.prepare(`SELECT user_id AS userId, username, role, approved_at AS approvedAt, criteria_version AS criteriaVersion,
       checks_json AS checksJson, comment FROM funnel_artifact_approvals WHERE artifact_id = ? AND review_cycle = ? ORDER BY approved_at, id`)
       .all(artifact.id, artifact.review_cycle).map(({ checksJson, ...item }) => ({ ...item, checks: JSON.parse(checksJson),
@@ -155,7 +160,7 @@ function mutateArtifact(db, session, funnelId, type, action, payload, idempotenc
     if (actor.role === "hiring_manager" && ["save", "submit"].includes(action) && !managerEditable.has(type)) {
       fail(403, "artifact_forbidden", "Для этого материала доступно чтение и возврат с комментарием.");
     }
-    const groups = approvalGroups(db, type);
+    const groups = action === "approve" ? approvalGroups(db, type) : null;
     if (action === "approve" && actor.role !== "owner" && !groups.some(group => group.includes(actor.role))) fail(403, "approval_forbidden", "Ваша роль не может утверждать этот материал.");
     const replay = db.prepare("SELECT * FROM funnel_artifact_operations WHERE user_id = ? AND idempotency_key = ?").get(actor.id, idempotencyKey);
     if (replay) {

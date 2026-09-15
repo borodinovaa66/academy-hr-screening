@@ -173,7 +173,13 @@ test("HTTP: configurable approval matrix fails closed on invalid/service roles",
   await f.write("role_profile", "submit", {}, f.hr);
   assert.equal((await f.write("role_profile", "approve", checks("role_profile"), f.hr)).status, 200);
   f.withDb(db => db.prepare("UPDATE configs SET value_json = ? WHERE key = 'funnel_approval_policy'").run(JSON.stringify({ role_profile: [["ai"]] })));
-  const response = await f.request(f.route("role_profile"), f.owner);
+  const readable = await f.request(f.route("role_profile"), f.owner);
+  assert.equal(readable.status, 200);
+  assert.equal(readable.body.approvalPolicyValid, false);
+  assert.deepEqual(readable.body.approvalGroups, []);
+  assert.equal((await f.write("role_profile", "save", { content: "Updated while policy is invalid" })).status, 200);
+  assert.equal((await f.write("role_profile", "submit")).status, 200);
+  const response = await f.write("role_profile", "approve", checks("role_profile"));
   assert.equal(response.status, 409);
   assert.equal(response.body.code, "invalid_approval_policy");
 });
