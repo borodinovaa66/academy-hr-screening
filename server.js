@@ -8,6 +8,9 @@ const { scoreSubmission, buildFlowAnalytics } = require("./src/scoring");
 const { defaultConfig } = require("./src/defaultConfig");
 const {
   initDb,
+  listFunnels,
+  getFunnel,
+  funnelMigrationSummary,
   getConfig,
   saveConfig,
   getQuestionnaireConfig,
@@ -110,7 +113,7 @@ const LEGAL_VERSION = {
 
 const rootDir = __dirname;
 const publicDir = path.join(rootDir, "public");
-const dataDir = path.join(rootDir, "data");
+const dataDir = process.env.HR_DATA_DIR || path.join(rootDir, "data");
 const resumeUploadDir = path.join(dataDir, "uploads", "resumes");
 const MAX_RESUME_UPLOAD_BYTES = 8 * 1024 * 1024;
 const ALLOWED_RESUME_EXTENSIONS = new Set([".pdf", ".doc", ".docx"]);
@@ -3443,6 +3446,16 @@ async function handleApi(req, res) {
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? requireAdmin(req, res) : null;
   if (url.pathname.startsWith("/api/admin/") && !adminSession) return;
+
+  if (req.method === "GET" && url.pathname === "/api/admin/funnels") {
+    return sendJson(res, 200, { funnels: listFunnels(adminSession), migration: funnelMigrationSummary(adminSession) }, { "Cache-Control": "private, no-store" });
+  }
+
+  if (req.method === "GET" && parts.length === 4 && parts[0] === "api" && parts[1] === "admin" && parts[2] === "funnels") {
+    const funnel = getFunnel(parts[3], adminSession);
+    if (!funnel) return sendJson(res, 404, { error: "Воронка не найдена или недоступна." }, { "Cache-Control": "private, no-store" });
+    return sendJson(res, 200, { funnel }, { "Cache-Control": "private, no-store" });
+  }
 
   if (req.method === "GET" && parts[0] === "api" && parts[1] === "admin" && parts[2] === "uploads" && parts[3] === "resumes" && parts[4]) {
     const fileName = path.basename(decodeURIComponent(parts[4]));
