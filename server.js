@@ -11,6 +11,8 @@ const {
   listFunnels,
   getFunnel,
   funnelMigrationSummary,
+  readCurrentFunnelArtifact,
+  mutateFunnelArtifact,
   getConfig,
   saveConfig,
   getQuestionnaireConfig,
@@ -67,6 +69,18 @@ const {
 } = require("./src/database");
 
 const PORT = Number(process.env.PORT || 4173);
+const funnelCsrfSecret = crypto.randomBytes(32);
+
+function funnelCsrfToken(session) {
+  return crypto.createHmac("sha256", funnelCsrfSecret).update(session.id).digest("hex");
+}
+
+function validFunnelCsrf(req, session) {
+  if (req.headers["sec-fetch-site"] === "cross-site") return false;
+  const supplied = req.headers["x-csrf-token"];
+  if (typeof supplied !== "string" || !/^[a-f0-9]{64}$/.test(supplied)) return false;
+  return crypto.timingSafeEqual(Buffer.from(supplied, "hex"), Buffer.from(funnelCsrfToken(session), "hex"));
+}
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "hr-demo";
 const ADMIN_PASSWORD_RESET = process.env.ADMIN_PASSWORD_RESET === "1";
@@ -3446,6 +3460,29 @@ async function handleApi(req, res) {
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? requireAdmin(req, res) : null;
   if (url.pathname.startsWith("/api/admin/") && !adminSession) return;
+
+  if (req.method === "GET" && url.pathname === "/api/admin/funnels/csrf") {
+    return sendJson(res, 200, { csrfToken: funnelCsrfToken(adminSession) }, { "Cache-Control": "private, no-store" });
+  }
+
+  if (parts[0] === "api" && parts[1] === "admin" && parts[2] === "funnels" && parts[4] === "artifacts") {
+    const headers = { "Cache-Control": "private, no-store" };
+    try {
+      if (req.method === "GET" && parts.length === 6) {
+        return sendJson(res, 200, readCurrentFunnelArtifact(adminSession, parts[3], parts[5]), headers);
+      }
+      const action = req.method === "PUT" && parts.length === 6 ? "save" :
+        req.method === "POST" && parts.length === 7 && ["submit", "approve", "reject"].includes(parts[6]) ? parts[6] : null;
+      if (!action) return sendJson(res, 404, { error: "Действие не найдено." }, headers);
+      if (!validFunnelCsrf(req, adminSession)) return sendJson(res, 403, { error: "Обновите страницу и повторите действие.", code: "csrf_invalid" }, headers);
+      const payload = await readBody(req);
+      return sendJson(res, 200, mutateFunnelArtifact(adminSession, parts[3], parts[5], action, payload, req.headers["idempotency-key"]), headers);
+    } catch (error) {
+      if (error.status) return sendJson(res, error.status, { error: error.message, code: error.code, ...error.details }, headers);
+      if (error.message === "Invalid JSON") return sendJson(res, 400, { error: "Некорректный JSON.", code: "invalid_json" }, headers);
+      throw error;
+    }
+  }
 
   if (req.method === "GET" && url.pathname === "/api/admin/funnels") {
     return sendJson(res, 200, { funnels: listFunnels(adminSession), migration: funnelMigrationSummary(adminSession) }, { "Cache-Control": "private, no-store" });

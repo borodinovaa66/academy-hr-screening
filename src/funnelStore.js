@@ -143,6 +143,20 @@ function syncLegacyFunnels(db, config) {
           JSON.stringify({ funnelId: opening.id, artifactType: type, version })
         );
         db.prepare("UPDATE vacancy_openings SET version = version + 1 WHERE id = ?").run(opening.id);
+        if (type === "role_profile") {
+          const dependent = db.prepare(`SELECT a.* FROM funnel_artifacts a WHERE a.funnel_id = ? AND a.artifact_type != 'role_profile'
+            AND a.version = (SELECT MAX(b.version) FROM funnel_artifacts b WHERE b.funnel_id = a.funnel_id AND b.artifact_type = a.artifact_type)
+            AND a.approval_status IN ('approved', 'review')`).all(opening.id);
+          for (const item of dependent) {
+            db.prepare(`UPDATE funnel_artifacts SET approval_status = 'draft', approved_version = NULL, approved_by_user_id = NULL,
+              approved_by_role = NULL, approved_at = NULL, updated_at = ? WHERE id = ?`).run(now, item.id);
+            db.prepare(`INSERT INTO audit_logs (id, created_at, user_id, username, role, action, target_type, target_id, vacancy_code, payload_json)
+              VALUES (?, ?, ?, ?, 'system', 'funnel.artifact.approval_invalidated', 'funnel', ?, ?, ?)`).run(crypto.randomUUID(), now,
+              LEGACY_ADAPTER_ACTOR, LEGACY_ADAPTER_ACTOR, opening.id, opening.vacancy_code,
+              JSON.stringify({ funnelId: opening.id, artifactType: item.artifact_type, version: item.version,
+                reason: "legacy_profile_changed", previousApprovedBy: item.approved_by_user_id }));
+          }
+        }
       }
     }
     // Only explicit legacy launch links are migrated. Orphans/conflicts stay visible as warnings.
@@ -209,6 +223,7 @@ function canReadFunnel(user, row) {
 function rowArtifact(row) {
   return {
     id: row.id, type: row.artifact_type, version: row.version,
+    profileVersion: row.profile_version ?? null, reviewCycle: row.review_cycle ?? 0,
     content: parse(row.content_json, null), contentHash: row.content_hash,
     generationStatus: row.generation_status, approvalStatus: row.approval_status,
     approvedVersion: row.approved_version, approvedByUserId: row.approved_by_user_id,

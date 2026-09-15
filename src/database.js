@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { defaultConfig } = require("./defaultConfig");
 const funnelStore = require("./funnelStore");
+const funnelArtifacts = require("./funnelArtifacts");
 
 const dataDir = process.env.HR_DATA_DIR || path.join(__dirname, "..", "data");
 const sqlitePath = path.join(dataDir, "hr-screening.sqlite");
@@ -412,6 +413,7 @@ async function initDb({
     }
   }
   funnelStore.migrateFunnelSchema(db);
+  funnelArtifacts.migrateArtifactWorkflow(db);
   refreshLegacyFunnels();
 }
 
@@ -429,6 +431,14 @@ function getFunnel(id, user) {
 
 function funnelMigrationSummary(user) {
   return funnelStore.funnelMigrationSummary(db, user);
+}
+
+function readCurrentFunnelArtifact(session, funnelId, type) {
+  return funnelArtifacts.readCurrentArtifact(db, session, funnelId, type);
+}
+
+function mutateFunnelArtifact(session, funnelId, type, action, payload, key) {
+  return funnelArtifacts.mutateArtifact(db, session, funnelId, type, action, payload, key);
 }
 
 function getUser(id) {
@@ -1369,6 +1379,8 @@ function upsertTelegramLink(record) {
 }
 
 module.exports = {
+  readCurrentFunnelArtifact,
+  mutateFunnelArtifact,
   funnelMigrationSummary,
   listFunnels,
   getFunnel,

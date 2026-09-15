@@ -173,3 +173,21 @@ test("migration failure rolls back schema changes", t => {
   assert.equal(db.prepare("PRAGMA table_info(vacancy_openings)").all().some(c => c.name === "source"), false);
   assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'funnel_artifacts'").get(), undefined);
 });
+
+test("legacy profile updates revoke dependent human approvals and record system identity", t => {
+  const db = fixture(t);
+  migrateFunnelSchema(db);
+  syncLegacyFunnels(db, config);
+  db.exec(`UPDATE funnel_artifacts SET source = 'human', approval_status = 'approved', approved_version = version,
+    approved_by_user_id = 'reviewer', approved_by_role = 'hr', approved_at = '2026-09-15' WHERE artifact_type = 'questionnaire'`);
+  const next = structuredClone(config);
+  next.vacancies.role.vacancyArtifacts.roleProfile = "Changed role";
+  syncLegacyFunnels(db, next);
+  const current = getFunnel(db, "a", owner).artifacts.find(item => item.type === "questionnaire");
+  assert.equal(current.approvalStatus, "draft");
+  assert.equal(current.approvedVersion, null);
+  assert.equal(current.version, 1);
+  const audit = db.prepare("SELECT * FROM audit_logs WHERE action = 'funnel.artifact.approval_invalidated'").get();
+  assert.equal(audit.user_id, "system:funnel-legacy-adapter");
+  assert.equal(audit.role, "system");
+});
