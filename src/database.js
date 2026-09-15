@@ -3,8 +3,9 @@ const path = require("path");
 const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { defaultConfig } = require("./defaultConfig");
+const funnelStore = require("./funnelStore");
 
-const dataDir = path.join(__dirname, "..", "data");
+const dataDir = process.env.HR_DATA_DIR || path.join(__dirname, "..", "data");
 const sqlitePath = path.join(dataDir, "hr-screening.sqlite");
 
 let db;
@@ -410,6 +411,24 @@ async function initDb({
         .run(json(defaultConfig), new Date().toISOString());
     }
   }
+  funnelStore.migrateFunnelSchema(db);
+  refreshLegacyFunnels();
+}
+
+function refreshLegacyFunnels() {
+  funnelStore.syncLegacyFunnels(db, getQuestionnaireConfig());
+}
+
+function listFunnels(user) {
+  return funnelStore.listFunnels(db, user);
+}
+
+function getFunnel(id, user) {
+  return funnelStore.getFunnel(db, id, user);
+}
+
+function funnelMigrationSummary(user) {
+  return funnelStore.funnelMigrationSummary(db, user);
 }
 
 function getUser(id) {
@@ -596,6 +615,7 @@ function createVacancyOpening(record) {
     record.hhPublicationId || null,
     json(record.payload || {})
   );
+  refreshLegacyFunnels();
   return getVacancyOpening(id);
 }
 
@@ -610,7 +630,8 @@ function updateVacancyOpening(id, patch) {
   const next = { ...current, ...patch, payload: { ...(current.payload || {}), ...(patch.payload || {}) } };
   db.prepare(`
     UPDATE vacancy_openings
-    SET updated_at = ?, title = ?, reason = ?, status = ?, hh_text_id = ?, hh_publication_id = ?, payload_json = ?
+    SET updated_at = ?, title = ?, reason = ?, status = ?, hh_text_id = ?, hh_publication_id = ?, payload_json = ?,
+      manual_status = ?, version = version + 1
     WHERE id = ?
   `).run(
     new Date().toISOString(),
@@ -620,8 +641,10 @@ function updateVacancyOpening(id, patch) {
     next.hhTextId || null,
     next.hhPublicationId || null,
     json(next.payload || {}),
+    ["paused", "closed", "archived"].includes(next.status) ? next.status : "",
     id
   );
+  refreshLegacyFunnels();
   return getVacancyOpening(id);
 }
 
@@ -660,6 +683,7 @@ function createHhVacancyText(record) {
     record.status || "draft",
     json(record.payload || {})
   );
+  refreshLegacyFunnels();
   return getHhVacancyText(id);
 }
 
@@ -709,6 +733,7 @@ function createHhPublication(record) {
     record.publishedAt || null,
     json(record.payload || {})
   );
+  refreshLegacyFunnels();
   return getHhPublication(id);
 }
 
@@ -734,6 +759,7 @@ function updateHhPublication(id, patch) {
     json(next.payload || {}),
     id
   );
+  refreshLegacyFunnels();
   return getHhPublication(id);
 }
 
@@ -956,6 +982,7 @@ function saveQuestionnaireConfig(config) {
     VALUES ('questionnaire', ?, ?)
     ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
   `).run(json(config), new Date().toISOString());
+  refreshLegacyFunnels();
   return config;
 }
 
@@ -1342,6 +1369,9 @@ function upsertTelegramLink(record) {
 }
 
 module.exports = {
+  funnelMigrationSummary,
+  listFunnels,
+  getFunnel,
   initDb,
   getConfig,
   saveConfig,
