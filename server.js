@@ -13,6 +13,8 @@ const {
   funnelMigrationSummary,
   readCurrentFunnelArtifact,
   mutateFunnelArtifact,
+  launchFunnel,
+  getShowcaseCatalog,
   getConfig,
   saveConfig,
   getQuestionnaireConfig,
@@ -3208,7 +3210,8 @@ async function handleApi(req, res) {
       const resolved = resolveVacancyState({ code, vacancy, openings, publications, texts });
       return vacancy.active && ["ready", "recruiting"].includes(resolved.code);
     }).map(([code, vacancy]) => ({ code, title: vacancy.title, url: `/v/${encodeURIComponent(code)}` }));
-    return sendJson(res, 200, { vacancies });
+    const showcase = getShowcaseCatalog();
+    return sendJson(res, 200, { vacancies: [...vacancies.filter(item => !showcase.managedCodes.includes(item.code)), ...showcase.vacancies] });
   }
 
   if (req.method === "GET" && url.pathname === "/api/config") {
@@ -3460,6 +3463,19 @@ async function handleApi(req, res) {
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? requireAdmin(req, res) : null;
   if (url.pathname.startsWith("/api/admin/") && !adminSession) return;
+
+  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "admin" && parts[2] === "funnels" && parts[4] === "launch") {
+    const headers = { "Cache-Control": "private, no-store" };
+    if (!validFunnelCsrf(req, adminSession)) return sendJson(res, 403, { code: "csrf_invalid", error: "Обновите страницу и повторите действие." }, headers);
+    try {
+      const result = await launchFunnel(adminSession, parts[3], await readBody(req), req.headers["idempotency-key"]);
+      return sendJson(res, result.status === "pending" ? 202 : 200, result, headers);
+    } catch (error) {
+      if (error.status) return sendJson(res, error.status, { code: error.code, error: error.message, ...error.details }, headers);
+      if (error.message === "Invalid JSON") return sendJson(res, 400, { code: "invalid_json", error: "Некорректный JSON." }, headers);
+      throw error;
+    }
+  }
 
   if (req.method === "GET" && url.pathname === "/api/admin/funnels/csrf") {
     return sendJson(res, 200, { csrfToken: funnelCsrfToken(adminSession) }, { "Cache-Control": "private, no-store" });

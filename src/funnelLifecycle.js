@@ -20,7 +20,7 @@ const FUNNEL_STATUSES = Object.freeze({
 });
 
 const ACTIVE_CHANNEL_STATUSES = new Set(["active", "open", "published"]);
-const PENDING_CHANNEL_STATUSES = new Set(["requested", "publishing", "syncing"]);
+const PENDING_CHANNEL_STATUSES = new Set(["pending", "requested", "publishing", "syncing"]);
 
 function normalizeStatus(value) {
   return String(value || "").trim().toLowerCase();

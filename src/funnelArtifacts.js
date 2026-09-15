@@ -247,4 +247,4 @@ function mutateArtifact(db, session, funnelId, type, action, payload, idempotenc
   }
 }
 
-module.exports = { migrateArtifactWorkflow, readCurrentArtifact, mutateArtifact, CRITERIA_VERSION, criteria };
+module.exports = { migrateArtifactWorkflow, readCurrentArtifact, mutateArtifact, CRITERIA_VERSION, criteria, actorFromSession };

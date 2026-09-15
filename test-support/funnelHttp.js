@@ -75,7 +75,12 @@ async function startFixture(t) {
   }
   function withDb(work) {
     const db = new DatabaseSync(path.join(directory, "hr-screening.sqlite"));
-    try { return work(db); } finally { db.close(); }
+    try {
+      const result = work(db);
+      if (result?.then) return result.finally(() => db.close());
+      db.close();
+      return result;
+    } catch (error) { db.close(); throw error; }
   }
   return { request, login, owner, hr, manager, id, route, current, write, withDb };
 }
