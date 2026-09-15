@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { REQUIRED_FUNNEL_ARTIFACTS, resolveFunnelLifecycle } = require("./funnelLifecycle");
+const LEGACY_ADAPTER_ACTOR = "system:funnel-legacy-adapter";
 
 function parse(value, fallback = {}) {
   try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
@@ -129,16 +130,17 @@ function syncLegacyFunnels(db, config) {
         if (latest?.content_hash === hash) continue;
         const version = (latest?.version || 0) + 1;
         db.prepare(`INSERT INTO funnel_artifacts
-          (id, funnel_id, artifact_type, version, content_json, content_hash, source, source_ref, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          (id, funnel_id, artifact_type, version, content_json, content_hash, source, source_ref, created_by_user_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
           crypto.randomUUID(), opening.id, type, version, encoded, hash,
           type === "headhunter_vacancy" && materials.textId ? "legacy_hh_text" : "legacy_config",
           type === "headhunter_vacancy" && materials.textId ? materials.textId : `questionnaire:${opening.vacancy_code}`,
-          now, now
+          LEGACY_ADAPTER_ACTOR, now, now
         );
-        db.prepare(`INSERT INTO audit_logs (id, created_at, action, target_type, target_id, vacancy_code, payload_json)
-          VALUES (?, ?, 'funnel.legacy_draft', 'funnel', ?, ?, ?)`).run(
-          crypto.randomUUID(), now, opening.id, opening.vacancy_code, JSON.stringify({ funnelId: opening.id, artifactType: type, version })
+        db.prepare(`INSERT INTO audit_logs (id, created_at, user_id, username, role, action, target_type, target_id, vacancy_code, payload_json)
+          VALUES (?, ?, ?, ?, 'system', 'funnel.legacy_draft', 'funnel', ?, ?, ?)`).run(
+          crypto.randomUUID(), now, LEGACY_ADAPTER_ACTOR, LEGACY_ADAPTER_ACTOR, opening.id, opening.vacancy_code,
+          JSON.stringify({ funnelId: opening.id, artifactType: type, version })
         );
         db.prepare("UPDATE vacancy_openings SET version = version + 1 WHERE id = ?").run(opening.id);
       }
@@ -181,8 +183,9 @@ function syncLegacyFunnels(db, config) {
         }
       }
       if (changed) {
-        db.prepare(`INSERT INTO audit_logs (id, created_at, action, target_type, target_id, vacancy_code, payload_json)
-          VALUES (?, ?, 'funnel.legacy_channel_sync', 'funnel', ?, ?, ?)`).run(crypto.randomUUID(), now, ids[0], publication.vacancy_code,
+        db.prepare(`INSERT INTO audit_logs (id, created_at, user_id, username, role, action, target_type, target_id, vacancy_code, payload_json)
+          VALUES (?, ?, ?, ?, 'system', 'funnel.legacy_channel_sync', 'funnel', ?, ?, ?)`).run(
+          crypto.randomUUID(), now, LEGACY_ADAPTER_ACTOR, LEGACY_ADAPTER_ACTOR, ids[0], publication.vacancy_code,
           JSON.stringify({ funnelId: ids[0], channelId, externalStatus, source: "legacy_adapter" }));
         db.prepare(`UPDATE vacancy_openings SET version = version + 1,
           last_status_sync_at = (SELECT MAX(last_synced_at) FROM funnel_channels WHERE funnel_id = ?) WHERE id = ?`).run(ids[0], ids[0]);

@@ -58,6 +58,8 @@ test("additive migration and adapter are repeatable and preserve legacy rows", t
   assert.equal(funnel.candidateCounts.linked, 0);
   assert.equal(funnel.candidateCounts.unassignedForRole, 1);
   assert.equal(funnel.candidateCounts.quarantine, null);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM funnel_artifacts WHERE created_by_user_id = 'system:funnel-legacy-adapter'").get().n, 5);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE user_id = 'system:funnel-legacy-adapter' AND role = 'system'").get().n, 5);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
 });
 
@@ -94,6 +96,7 @@ test("active HH requires saved API evidence; archive wins; external ID has only 
   assert.equal(getFunnel(db, "a", owner).status, "external_open_blocked");
   assert.equal(getFunnel(db, "a", owner).canProcessCandidates, false);
   assert.equal(getFunnel(db, "a", owner).channels.length, 1);
+  assert.equal(db.prepare("SELECT user_id FROM audit_logs WHERE action = 'funnel.legacy_channel_sync' ORDER BY created_at DESC LIMIT 1").get().user_id, "system:funnel-legacy-adapter");
   db.prepare("UPDATE hh_publications SET payload_json = ? WHERE id = 'p'")
     .run(JSON.stringify({ hhMetrics: { fetchedAt: "2026-01-03", archived: true } }));
   syncLegacyFunnels(db, config);
