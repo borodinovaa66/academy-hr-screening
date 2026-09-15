@@ -45,16 +45,16 @@
 
 ### HR-XFER-20260915-02 — Реализовать жизненный цикл воронки подбора
 
-- Статус: `ГОТОВО К ПЕРЕДАЧЕ`
+- Статус: `В РАБОТЕ`
 - Приоритет: `P1`
 - Создано: `2026-09-15`
-- Обновлено: `2026-09-15 20:10 +04:00`
+- Обновлено: `2026-09-15 20:20 +04:00`
 - Автор: `руководитель проекта / Создать доску координации проекта`
 - Получатель: `разработчик платформы / Интерфейс/дизайн`
 - Владелец следующего действия: `разработчик платформы`
 - Зачем это нужно: `отделить справочник вакансий от конкретных запусков подбора и не допускать кандидатов в непроверенную воронку`
-- Исходный артефакт: [`RECRUITMENT_FUNNEL_LIFECYCLE_SPEC_V1.md`](../RECRUITMENT_FUNNEL_LIFECYCLE_SPEC_V1.md); [`production v79 handoff`](inbox/2026-09-15_developer_production-v79-handoff.md)
-- Связанный GitHub Issue: `создать при приёме задачи в разработку`
+- Исходный артефакт: [`RECRUITMENT_FUNNEL_LIFECYCLE_SPEC_V1.md`](../RECRUITMENT_FUNNEL_LIFECYCLE_SPEC_V1.md); [`production v79 handoff`](inbox/2026-09-15_developer_production-v79-handoff.md); [Pull Request #1](https://github.com/borodinovaa66/academy-hr-screening/pull/1)
+- Связанный GitHub Issue: [Issue #2](https://github.com/borodinovaa66/academy-hr-screening/issues/2)
 - Зависимости: `HR-XFER-20260915-01 завершена; production v79 зафиксирован коммитом 64c1022`
 - Что нужно сделать: `реализовать данные, API и интерфейс двухстороннего запуска Platform-first и HeadHunter-first по этапам спецификации`
 - Критерии приёмки:
