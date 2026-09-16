@@ -99,9 +99,13 @@ public/index.html         SPA entry point
 
 ## Documents
 
+- [Project agent rules](AGENTS.md)
+- [Cross-role coordination board](docs/agent-team/06_COORDINATION_BOARD.md)
 - [Project handover](PROJECT_HANDOVER.md)
 - [Deployment](DEPLOYMENT.md)
 - [HR guide](HR_GUIDE.md)
+- [Evidence-based hiring standard v2](docs/EVIDENCE_BASED_HIRING_STANDARD_V2.md)
+- [Evidence-based role package template v2](docs/ROLE_PACKAGE_TEMPLATE_V2.md)
 - [Security](SECURITY.md)
 - [Backlog](BACKLOG.md)
 - [Changelog](CHANGELOG.md)
