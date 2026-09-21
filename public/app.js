@@ -1576,6 +1576,8 @@ function loadAdmin() {
 }
 
 async function fetchAdminData() {
+  const catalogResponse = await fetch("/api/admin/position-catalog");
+  state.positionCatalog = catalogResponse.ok ? (await catalogResponse.json()).titles : [];
   const vacancy = encodeURIComponent(state.adminVacancyCode || "smm");
   const requests = [
     fetch(`/api/admin/submissions?vacancy=${vacancy}`),
@@ -1615,10 +1617,17 @@ async function fetchAdminData() {
     const configData = await configResponse.json();
     state.adminConfigRoot = configData.config || state.adminConfigRoot;
     state.vacancies = configData.vacancies || state.vacancies;
+    if (state.user?.role === "hiring_manager" && Object.keys(state.vacancies).length === 0) {
+      state.adminVacancyCode = "";
+      state.config = null;
+      state.questionnaireDraft = null;
+      state.selected = null;
+      state.adminSection = "hiring";
+    }
     if (!state.vacancies[state.adminVacancyCode]) {
       state.adminVacancyCode = Object.keys(state.vacancies)[0] || state.adminVacancyCode;
     }
-    const adminConfig = configData.config?.vacancies?.[state.adminVacancyCode] || configData.config;
+    const adminConfig = configData.config?.vacancies?.[state.adminVacancyCode] || (state.user?.role === "hiring_manager" ? null : configData.config);
     if (adminConfig) {
       applyConfig(adminConfig);
       if (state.questionnaireDraftVacancyCode !== state.adminVacancyCode) {
@@ -3660,10 +3669,6 @@ async function createStaffUser() {
     showToast("Пароль должен быть не короче 8 символов.");
     return;
   }
-  if (payload.role === "hiring_manager" && payload.vacancyAccess.length === 0) {
-    showToast("Для руководителя-заказчика выберите хотя бы одну вакансию.");
-    return;
-  }
   const response = await fetch("/api/admin/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3760,7 +3765,7 @@ function staffManagementView() {
             el("option", { value: "hr", selected: state.staffForm.role === "hr" ? "selected" : null }, ["HR: все вакансии"]),
             el("option", { value: "hiring_manager", selected: state.staffForm.role === "hiring_manager" ? "selected" : null }, ["Руководитель-заказчик: только выбранные вакансии"])
           ]),
-          el("small", {}, ["HR видит все воронки. Руководителю ниже нужно выбрать конкретные вакансии."])
+          el("small", {}, ["HR видит все воронки. Руководителя можно добавить без вакансий: он создаст свою первую вакансию после входа."])
         ]),
         el("label", { class: "named-input staff-field" }, [
           el("span", {}, ["Начальный пароль сотрудника"]),
@@ -3775,7 +3780,7 @@ function staffManagementView() {
         ])
       ]),
       state.staffForm.role === "hiring_manager" ? el("div", { class: "staff-vacancy-access" }, [
-        el("strong", {}, ["Доступ к вакансиям"]),
+        el("strong", {}, ["Доступ к существующим вакансиям (необязательно)"]),
         ...vacancies.map(([code, vacancy]) => {
           const checked = state.staffForm.vacancyAccess.includes(code);
           return el("label", { class: `choice compact-choice ${checked ? "selected" : ""}` }, [
@@ -4565,8 +4570,31 @@ function vacancyCreatedDialog() {
   ]);
 }
 
+function positionCatalogPanel() {
+  const list = el("div", { class: "staff-form-grid" });
+  const update = query => {
+    const titles = (state.positionCatalog || []).filter(title => title.toLocaleLowerCase("ru").includes(query.toLocaleLowerCase("ru")));
+    list.replaceChildren(...titles.map(title => el("button", {
+      class: "btn ghost", type: "button", onclick: () => {
+        resetVacancyWizard();
+        state.vacancyWizard.sourceText = `Название позиции: ${title}\n`;
+        openVacancyWizard();
+      }
+    }, [title])));
+    if (!titles.length) list.append(el("p", {}, ["Подходящих позиций нет. Создайте новую вакансию ниже."]));
+  };
+  update("");
+  return el("section", { class: "table-panel" }, [
+    el("h2", {}, [Object.keys(state.vacancies || {}).length ? "Найти позицию" : "Ваша первая вакансия"]),
+    el("p", {}, ["Выбор названия создаёт отдельный черновик. Доступ к чужим вакансиям и кандидатам не предоставляется."]),
+    el("input", { class: "input", type: "search", placeholder: "Название должности", "aria-label": "Поиск позиции", oninput: event => update(event.target.value) }),
+    list
+  ]);
+}
+
 function hiringDashboardView() {
   const canCreateOpening = canStartRecruitment();
+  const hasVacancies = Object.keys(state.vacancies || {}).length > 0;
   const activeOpenings = activeOpeningItems();
   return el("section", { class: "staff-page" }, [
     el("header", { class: "dash-header" }, [
@@ -4576,7 +4604,8 @@ function hiringDashboardView() {
         el("p", {}, ["Выберите готовую вакансию из справочника или создайте новую позицию отдельным сценарием ниже."])
       ])
     ]),
-    el("section", { class: "table-panel staff-form" }, [
+    positionCatalogPanel(),
+    hasVacancies ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Заявка по готовой вакансии"]), el("span", {}, ["Выберите позицию из справочника и укажите причину открытия."])]),
       el("div", { class: "staff-form-grid" }, [
         hiringVacancyField(),
@@ -4587,10 +4616,10 @@ function hiringDashboardView() {
       el("div", { class: "admin-form-actions" }, [
         el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
       ])
-    ]),
+    ]) : el("div"),
     canCreateOpening ? vacancyWizardPanel() : el("div"),
     canCreateOpening ? createdVacancyReviewPanel() : el("div"),
-    canCreateOpening ? el("section", { class: "table-panel staff-form" }, [
+    canCreateOpening && hasVacancies ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Начать подбор по готовой вакансии"]), el("span", {}, ["Создает рабочую воронку по выбранной позиции."])]),
       el("div", { class: "staff-form-grid" }, [
         openingVacancyField(),
@@ -5039,7 +5068,9 @@ function adminView() {
   const testConversion = pctText(testKpis.submitted, analytics.total || 0);
   const selected = state.selected;
   const currentVacancyTitle = vacancyLabel(state.adminVacancyCode);
-  const mainContent = state.adminSection === "overview"
+  const mainContent = state.user.role === "hiring_manager" && !Object.keys(state.vacancies || {}).length
+    ? hiringDashboardView()
+    : state.adminSection === "overview"
     ? adminOverviewView()
     : state.adminSection === "staff" && isOwner()
     ? staffManagementView()

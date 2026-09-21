@@ -3467,7 +3467,7 @@ async function handleApi(req, res) {
     const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
     const requestedVacancy = url.searchParams.get("vacancy");
     const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
-    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    if (!vacancyCode) return sendJson(res, 200, { vacancyCode: null, submissions: [] });
     const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
     return sendJson(res, 200, { vacancyCode, submissions: submissions.map(publicCandidate) });
   }
@@ -3692,7 +3692,7 @@ async function handleApi(req, res) {
     const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
     const requestedVacancy = url.searchParams.get("vacancy");
     const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
-    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    if (!vacancyCode) return sendJson(res, 200, { vacancyCode: null, analytics: buildFlowAnalytics([], []) });
     const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
     const events = vacancyCode ? listEvents().filter(event => event.vacancyCode === vacancyCode) : listEvents();
     const analytics = buildFlowAnalytics(submissions, events);
@@ -3705,10 +3705,15 @@ async function handleApi(req, res) {
     const visibleConfig = adminSession.role === "owner" || adminSession.role === "hr"
       ? config
       : {
-        ...config,
         vacancies: Object.fromEntries(Object.keys(visible).map(code => [code, config.vacancies?.[code]]).filter(([, value]) => Boolean(value)))
       };
     return sendJson(res, 200, { config: visibleConfig, vacancies: visible });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/position-catalog") {
+    // Expose role names, never another manager's configuration or candidate data.
+    const titles = [...new Set(Object.values(getVacancies(getQuestionnaireConfig())).map(item => item.adminTitle || item.title).filter(Boolean))];
+    return sendJson(res, 200, { titles });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/vacancy-duplicate-analysis") {
