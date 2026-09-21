@@ -3781,6 +3781,19 @@ function staffManagementView() {
       ]),
       state.staffForm.role === "hiring_manager" ? el("div", { class: "staff-vacancy-access" }, [
         el("strong", {}, ["Доступ к существующим вакансиям (необязательно)"]),
+        el("label", { class: `choice compact-choice ${state.staffForm.vacancyAccess.length === 0 ? "selected" : ""}` }, [
+          el("input", {
+            type: "checkbox",
+            checked: state.staffForm.vacancyAccess.length === 0 ? "checked" : null,
+            onchange: () => {
+              state.staffForm.vacancyAccess = [];
+              render();
+            }
+          }),
+          el("span", { html: state.staffForm.vacancyAccess.length === 0 ? icon("check") : "" }),
+          el("strong", {}, ["Пока нет вакансий"])
+        ]),
+        el("small", {}, ["Руководитель войдёт в пустой кабинет и сможет создать свою первую вакансию. Выбор этого пункта снимает доступ к отмеченным ниже вакансиям для нового сотрудника."]),
         ...vacancies.map(([code, vacancy]) => {
           const checked = state.staffForm.vacancyAccess.includes(code);
           return el("label", { class: `choice compact-choice ${checked ? "selected" : ""}` }, [
@@ -3814,7 +3827,7 @@ function staffManagementView() {
               ? "полный доступ владельца"
               : user.role === "hr"
                 ? "доступ ко всем вакансиям"
-                : ((user.vacancyAccess || []).map(code => vacancyLabel(code)).join(", ") || "нет выбранных вакансий")
+                : ((user.vacancyAccess || []).map(code => vacancyLabel(code)).join(", ") || "Пока нет вакансий")
           ])
         ]),
         el("div", {}, [
