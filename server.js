@@ -1227,6 +1227,7 @@ function buildGeneratedVacancyConfig(vacancyCode, draft, sourceText) {
       ...Object.fromEntries(generatedQuestionIds.map(question => [question.id, "Здесь важен ваш реальный опыт и ход мыслей именно под эту роль."]))
     },
     vacancyArtifacts: {
+      publicFunnelApproved: false,
       generatedAt: new Date().toISOString(),
       sourceText: cleanText(sourceText, 6000),
       roleProfile: draft.roleProfile,
@@ -3157,6 +3158,42 @@ async function handleApi(req, res) {
     }
   }
 
+  if (req.method === "GET" && /^\/api\/vacancies\/[^/]+\/description$/.test(url.pathname)) {
+    const code = decodeURIComponent(url.pathname.split("/")[3]);
+    const vacancy = getVacancies()[code];
+    if (!vacancy) return sendJson(res, 404, { error: "Вакансия не найдена." });
+    const publications = listHhPublications().filter(item => item.vacancyCode === code);
+    const texts = listHhVacancyTexts().filter(item => item.vacancyCode === code);
+    const linked = publications[0]?.hhTextId && texts.find(item => item.id === publications[0].hhTextId);
+    let body = (linked || texts.find(item => item.status === "imported"))?.body || "";
+    let source = "headhunter";
+    if (!body && code === "project-manager") {
+      const document = await fs.readFile(path.join(rootDir, "docs/role-packages/project-manager/02_HEADHUNTER_VACANCY_TEXT.md"), "utf8");
+      body = document.split("## Полный текст вакансии")[1]?.split("## Ключевые слова для HeadHunter")[0]?.trim() || "";
+      body = body.replace(/Ссылка на анкету:.*$/m, "");
+      source = "prepared";
+    }
+    if (!body) return sendJson(res, 404, { error: "Описание вакансии пока не опубликовано." });
+    return sendJson(res, 200, { title: vacancy.title, body, source });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/vacancies") {
+    const config = getQuestionnaireConfig();
+    const { resolveVacancyState } = require("./public/vacancy-state");
+    const openings = listVacancyOpenings();
+    const publications = listHhPublications();
+    const texts = listHhVacancyTexts();
+    const vacancies = Object.entries(getVacancies(config)).filter(([code, vacancy]) => {
+      const artifacts = config.vacancies?.[code]?.vacancyArtifacts;
+      if (artifacts && artifacts.publicFunnelApproved !== true) return false;
+      const status = String(config.vacancies?.[code]?.status || "");
+      if (["paused", "closed", "archived", "draft"].includes(status)) return false;
+      const resolved = resolveVacancyState({ code, vacancy, openings, publications, texts });
+      return vacancy.active && ["ready", "recruiting"].includes(resolved.code);
+    }).map(([code, vacancy]) => ({ code, title: vacancy.title, url: `/v/${encodeURIComponent(code)}` }));
+    return sendJson(res, 200, { vacancies });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/config") {
     const baseConfig = getQuestionnaireConfig();
     const vacancyCode = requestedVacancyCode(url, baseConfig.activeVacancyCode || "smm");
@@ -3430,7 +3467,7 @@ async function handleApi(req, res) {
     const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
     const requestedVacancy = url.searchParams.get("vacancy");
     const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
-    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    if (!vacancyCode) return sendJson(res, 200, { vacancyCode: null, submissions: [] });
     const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
     return sendJson(res, 200, { vacancyCode, submissions: submissions.map(publicCandidate) });
   }
@@ -3655,7 +3692,7 @@ async function handleApi(req, res) {
     const allowed = allowedVacancyCodes(adminSession, vacancyCodes(baseConfig));
     const requestedVacancy = url.searchParams.get("vacancy");
     const vacancyCode = requestedVacancy && allowed.includes(requestedVacancy) ? requestedVacancy : allowed[0];
-    if (!vacancyCode) return sendJson(res, 403, { error: "Нет доступа к вакансиям." });
+    if (!vacancyCode) return sendJson(res, 200, { vacancyCode: null, analytics: buildFlowAnalytics([], []) });
     const submissions = vacancyCode ? listSubmissionsByVacancy(vacancyCode) : listSubmissions();
     const events = vacancyCode ? listEvents().filter(event => event.vacancyCode === vacancyCode) : listEvents();
     const analytics = buildFlowAnalytics(submissions, events);
@@ -3668,10 +3705,15 @@ async function handleApi(req, res) {
     const visibleConfig = adminSession.role === "owner" || adminSession.role === "hr"
       ? config
       : {
-        ...config,
         vacancies: Object.fromEntries(Object.keys(visible).map(code => [code, config.vacancies?.[code]]).filter(([, value]) => Boolean(value)))
       };
     return sendJson(res, 200, { config: visibleConfig, vacancies: visible });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/position-catalog") {
+    // Expose role names, never another manager's configuration or candidate data.
+    const titles = [...new Set(Object.values(getVacancies(getQuestionnaireConfig())).map(item => item.adminTitle || item.title).filter(Boolean))];
+    return sendJson(res, 200, { titles });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/vacancy-duplicate-analysis") {

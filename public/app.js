@@ -1,7 +1,7 @@
 const ADMIN_USER_KEY = "hr_admin_user";
 const FUNNEL_SESSION_KEY = "hr_funnel_session";
 const FUNNEL_LANDING_KEY = "hr_funnel_landing_tracked";
-const APP_CLIENT_VERSION = "2026-07-22-03";
+const APP_CLIENT_VERSION = "2026-09-15-02";
 const APP_RELEASE_SEEN_KEY = "hr_seen_release_version";
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const LEGAL_VERSION = {
@@ -809,6 +809,14 @@ function applyConfig(config) {
 }
 
 async function loadConfig() {
+  if (currentAppRoute() === "vacancy-description") {
+    const response = await fetch(`/api/vacancies/${encodeURIComponent(vacancyCodeFromPath())}/description`);
+    state.vacancyDescription = await response.json();
+    return;
+  }
+  const catalogResponse = await fetch("/api/vacancies");
+  if (catalogResponse.ok) state.publicVacancies = (await catalogResponse.json()).vacancies;
+  if (currentAppRoute() === "vacancy-catalog") return;
   state.activeVacancyCode = vacancyCodeFromPath();
   const response = await fetch(`/api/config?vacancy=${encodeURIComponent(state.activeVacancyCode)}`);
   if (!response.ok) throw new Error("Config load failed");
@@ -859,10 +867,65 @@ function setConsent(id, checked) {
 }
 
 function currentAppRoute() {
+  if (/^\/v\/[^/]+\/description\/?$/.test(location.pathname)) return "vacancy-description";
   if (location.pathname === "/privacy") return "privacy";
   if (location.pathname === "/personal-data-consent") return "personal-data-consent";
   if (state.route.startsWith("#test/")) return "test-assignment";
-  return state.route === "#admin" || state.route.startsWith("#admin/") ? "admin" : "candidate";
+  if (state.route === "#admin" || state.route.startsWith("#admin/")) return "admin";
+  return location.pathname === "/" ? "vacancy-catalog" : "candidate";
+}
+
+function vacancyCatalogView() {
+  return el("main", { class: "vacancy-catalog" }, [
+    el("header", { class: "catalog-header" }, [
+      brandMark(),
+      el("a", { class: "btn ghost", href: "/#admin" }, [iconEl("user"), "Вход для команды"])
+    ]),
+    el("section", { class: "catalog-intro" }, [
+      el("div", {}, [
+        el("p", { class: "catalog-eyebrow" }, ["Работа в нашей команде"]),
+        el("h1", {}, ['Бизнес-школа "Академия менеджмента"']),
+        el("p", {}, ["Выберите вакансию и познакомьтесь с нами через анкету кандидата."])
+      ]),
+      el("img", { src: "/assets/smm-guide-character.png", alt: "Саша, помощник кандидатов", width: "200", height: "240" })
+    ]),
+    el("section", { class: "catalog-list", "aria-label": "Вакансии" }, [
+      el("h2", {}, ["Наши вакансии"]),
+      ...(state.publicVacancies === undefined
+        ? [el("p", { role: "status" }, [state.loading ? "Загружаем вакансии..." : "Не удалось загрузить вакансии. Обновите страницу."])]
+        : state.publicVacancies.length
+          ? state.publicVacancies.map(vacancy => el("a", { class: "catalog-vacancy", href: vacancy.url }, [
+            el("h3", {}, [vacancy.title]),
+            el("span", {}, ["Перейти к анкете", iconEl("arrow")])
+          ]))
+          : [el("p", {}, ["Сейчас нет вакансий, открытых для отклика."])]),
+      el("a", { class: "catalog-contact", href: "mailto:hr@praktiki.pro" }, ["Связаться с отделом персонала: hr@praktiki.pro"])
+    ]),
+    siteFooter()
+  ]);
+}
+
+function vacancyDescriptionView() {
+  const description = state.vacancyDescription;
+  const questionnaire = `/v/${encodeURIComponent(vacancyCodeFromPath())}${location.search}`;
+  return el("main", { class: "vacancy-description" }, [
+    el("a", { class: "catalog-back", href: questionnaire }, ["Вернуться к анкете"]),
+    el("header", { class: "description-heading" }, [
+      el("div", {}, [
+        el("p", {}, ['Бизнес-школа "Академия менеджмента"']),
+        el("h1", {}, [description?.title || "Описание вакансии"])
+      ]),
+      el("img", { src: "/assets/smm-guide-character.png", alt: "Саша, помощник кандидатов", width: "100", height: "150" })
+    ]),
+    el("article", { class: "description-body" }, description?.body
+      ? description.body.split(/\r?\n/).filter(line => line.trim()).map(line => {
+        const heading = /^#{1,6}\s+/.test(line);
+        return el(heading ? "h2" : "p", {}, [line.replace(/^#{1,6}\s+/, "")]);
+      })
+      : [el("p", { role: "status" }, [description?.error || (state.loading ? "Загружаем описание..." : "Не удалось загрузить описание. Обновите страницу.")])]),
+    el("a", { class: "btn primary", href: questionnaire }, ["Перейти к анкете", iconEl("arrow")]),
+    siteFooter()
+  ]);
 }
 
 function progress() {
@@ -1202,6 +1265,7 @@ function welcomeView() {
   const ui = state.config?.ui || {};
   const facts = ui.facts || ["20 вопросов", "7-10 минут", "по делу"];
   return el("main", { class: "welcome-shell" }, [
+    el("a", { class: "catalog-back", href: "/" }, ["Все вакансии"]),
     brandMark(),
     el("section", { class: "welcome-card" }, [
       el("div", { class: "welcome-copy" }, [
@@ -1209,6 +1273,10 @@ function welcomeView() {
         el("h1", {}, [ui.welcomeTitle || "Привет! Давайте познакомимся"]),
         el("p", { class: "lead" }, [ui.welcomeLead || state.config.intro || "Ответьте на несколько вопросов по вашему опыту."]),
         el("p", { class: "sublead" }, [ui.welcomeSublead || "Анкета займет около 7-10 минут."]),
+        ["smm", "project-manager"].includes(state.activeVacancyCode) ? el("div", { class: "vacancy-description-link" }, [
+          el("p", {}, ["Еще не знакомы с вакансией или хотите освежить память? Прочитайте о задачах, требованиях и условиях работы."]),
+          el("a", { class: "btn ghost", href: `/v/${encodeURIComponent(state.activeVacancyCode)}/description${location.search}` }, [iconEl("list"), "Описание вакансии"])
+        ]) : el("div"),
         el("div", { class: "pill-row" }, [
           el("span", { class: "pill blue" }, [facts[0] || "анкета"]),
           el("span", { class: "pill green" }, [facts[1] || "быстро"]),
@@ -1501,7 +1569,15 @@ function markTestAssignmentViewed(id) {
   }).catch(() => {});
 }
 
-async function loadAdmin() {
+let adminRequest = null;
+function loadAdmin() {
+  if (!adminRequest) adminRequest = fetchAdminData().finally(() => { adminRequest = null; });
+  return adminRequest;
+}
+
+async function fetchAdminData() {
+  const catalogResponse = await fetch("/api/admin/position-catalog");
+  state.positionCatalog = catalogResponse.ok ? (await catalogResponse.json()).titles : [];
   const vacancy = encodeURIComponent(state.adminVacancyCode || "smm");
   const requests = [
     fetch(`/api/admin/submissions?vacancy=${vacancy}`),
@@ -1510,16 +1586,16 @@ async function loadAdmin() {
     fetch("/api/admin/hiring-requests"),
     fetch("/api/admin/vacancy-openings"),
     fetch("/api/admin/hh-texts"),
-    fetch(`/api/admin/hh-publications?vacancy=${vacancy}&refresh=1`),
+    fetch(`/api/admin/hh-publications?vacancy=${vacancy}`),
     fetch("/api/admin/hh/status"),
-    fetch("/api/admin/hh/promotion-status"),
-    fetch("/api/admin/hh/responses"),
-    fetch("/api/admin/vacancy-duplicate-analysis"),
-    fetch("/api/admin/bitrix/notifications")
+    state.adminSection === "hh" ? fetch("/api/admin/hh/promotion-status", { signal: AbortSignal.timeout(8000) }).catch(() => null) : Promise.resolve(null),
+    state.adminSection === "hh" ? fetch("/api/admin/hh/responses") : Promise.resolve(null),
+    state.adminSection === "hh" ? fetch("/api/admin/vacancy-duplicate-analysis") : Promise.resolve(null),
+    state.adminSection === "notifications" ? fetch("/api/admin/bitrix/notifications") : Promise.resolve(null)
   ];
   if (isOwner()) {
-    requests.push(fetch("/api/admin/users"));
-    requests.push(fetch("/api/admin/audit"));
+    requests.push(state.adminSection === "staff" ? fetch("/api/admin/users") : Promise.resolve(null));
+    requests.push(state.adminSection === "audit" ? fetch("/api/admin/audit") : Promise.resolve(null));
   }
   const [subs, analytics, configResponse, hiringRequestsResponse, openingsResponse, hhTextsResponse, hhPublicationsResponse, hhStatusResponse, hhPromotionStatusResponse, hhResponsesResponse, vacancyDuplicateAnalysisResponse, bitrixNotificationsResponse, usersResponse, auditResponse] = await Promise.all(requests);
   if (subs.status === 401 || analytics.status === 401) return false;
@@ -1541,10 +1617,17 @@ async function loadAdmin() {
     const configData = await configResponse.json();
     state.adminConfigRoot = configData.config || state.adminConfigRoot;
     state.vacancies = configData.vacancies || state.vacancies;
+    if (state.user?.role === "hiring_manager" && Object.keys(state.vacancies).length === 0) {
+      state.adminVacancyCode = "";
+      state.config = null;
+      state.questionnaireDraft = null;
+      state.selected = null;
+      state.adminSection = "hiring";
+    }
     if (!state.vacancies[state.adminVacancyCode]) {
       state.adminVacancyCode = Object.keys(state.vacancies)[0] || state.adminVacancyCode;
     }
-    const adminConfig = configData.config?.vacancies?.[state.adminVacancyCode] || configData.config;
+    const adminConfig = configData.config?.vacancies?.[state.adminVacancyCode] || (state.user?.role === "hiring_manager" ? null : configData.config);
     if (adminConfig) {
       applyConfig(adminConfig);
       if (state.questionnaireDraftVacancyCode !== state.adminVacancyCode) {
@@ -1579,13 +1662,19 @@ async function loadAdmin() {
 }
 
 async function ensureAdminLoaded() {
-  if (!state.user) return;
+  if (!state.user || state.adminLoadPending) return;
   if (!state.analytics) {
+    state.adminLoadPending = true;
     state.loading = true;
-    render();
-    await loadAdmin();
-    state.loading = false;
-    render();
+    try {
+      await loadAdmin();
+    } catch {
+      showToast("Не удалось загрузить кабинет. Обновите страницу.");
+    } finally {
+      state.adminLoadPending = false;
+      state.loading = false;
+    }
+    if (state.analytics) render();
   }
 }
 
@@ -1722,7 +1811,8 @@ function testAssignmentKpiCounts() {
 function adminNavButton(section, label, iconName) {
   return el("button", {
     class: `btn ghost ${state.adminSection === section ? "active" : ""}`,
-    onclick: () => {
+    onclick: async () => {
+      if (adminRequest) await adminRequest;
       state.adminSection = section;
       const hash = section === "overview"
         ? "#admin"
@@ -1730,6 +1820,7 @@ function adminNavButton(section, label, iconName) {
           ? `#admin/questionnaire/${encodeURIComponent(state.adminVacancyCode || "smm")}`
           : `#admin/${section}`;
       if (location.hash !== hash) history.replaceState(null, "", hash);
+      state.analytics = null;
       render();
     }
   }, [iconEl(iconName), label]);
@@ -3578,10 +3669,6 @@ async function createStaffUser() {
     showToast("Пароль должен быть не короче 8 символов.");
     return;
   }
-  if (payload.role === "hiring_manager" && payload.vacancyAccess.length === 0) {
-    showToast("Для руководителя-заказчика выберите хотя бы одну вакансию.");
-    return;
-  }
   const response = await fetch("/api/admin/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3678,7 +3765,7 @@ function staffManagementView() {
             el("option", { value: "hr", selected: state.staffForm.role === "hr" ? "selected" : null }, ["HR: все вакансии"]),
             el("option", { value: "hiring_manager", selected: state.staffForm.role === "hiring_manager" ? "selected" : null }, ["Руководитель-заказчик: только выбранные вакансии"])
           ]),
-          el("small", {}, ["HR видит все воронки. Руководителю ниже нужно выбрать конкретные вакансии."])
+          el("small", {}, ["HR видит все воронки. Руководителя можно добавить без вакансий: он создаст свою первую вакансию после входа."])
         ]),
         el("label", { class: "named-input staff-field" }, [
           el("span", {}, ["Начальный пароль сотрудника"]),
@@ -3693,7 +3780,20 @@ function staffManagementView() {
         ])
       ]),
       state.staffForm.role === "hiring_manager" ? el("div", { class: "staff-vacancy-access" }, [
-        el("strong", {}, ["Доступ к вакансиям"]),
+        el("strong", {}, ["Доступ к существующим вакансиям (необязательно)"]),
+        el("label", { class: `choice compact-choice ${state.staffForm.vacancyAccess.length === 0 ? "selected" : ""}` }, [
+          el("input", {
+            type: "checkbox",
+            checked: state.staffForm.vacancyAccess.length === 0 ? "checked" : null,
+            onchange: () => {
+              state.staffForm.vacancyAccess = [];
+              render();
+            }
+          }),
+          el("span", { html: state.staffForm.vacancyAccess.length === 0 ? icon("check") : "" }),
+          el("strong", {}, ["Пока нет вакансий"])
+        ]),
+        el("small", {}, ["Руководитель войдёт в пустой кабинет и сможет создать свою первую вакансию. Выбор этого пункта снимает доступ к отмеченным ниже вакансиям для нового сотрудника."]),
         ...vacancies.map(([code, vacancy]) => {
           const checked = state.staffForm.vacancyAccess.includes(code);
           return el("label", { class: `choice compact-choice ${checked ? "selected" : ""}` }, [
@@ -3727,7 +3827,7 @@ function staffManagementView() {
               ? "полный доступ владельца"
               : user.role === "hr"
                 ? "доступ ко всем вакансиям"
-                : ((user.vacancyAccess || []).map(code => vacancyLabel(code)).join(", ") || "нет выбранных вакансий")
+                : ((user.vacancyAccess || []).map(code => vacancyLabel(code)).join(", ") || "Пока нет вакансий")
           ])
         ]),
         el("div", {}, [
@@ -4483,8 +4583,31 @@ function vacancyCreatedDialog() {
   ]);
 }
 
+function positionCatalogPanel() {
+  const list = el("div", { class: "staff-form-grid" });
+  const update = query => {
+    const titles = (state.positionCatalog || []).filter(title => title.toLocaleLowerCase("ru").includes(query.toLocaleLowerCase("ru")));
+    list.replaceChildren(...titles.map(title => el("button", {
+      class: "btn ghost", type: "button", onclick: () => {
+        resetVacancyWizard();
+        state.vacancyWizard.sourceText = `Название позиции: ${title}\n`;
+        openVacancyWizard();
+      }
+    }, [title])));
+    if (!titles.length) list.append(el("p", {}, ["Подходящих позиций нет. Создайте новую вакансию ниже."]));
+  };
+  update("");
+  return el("section", { class: "table-panel" }, [
+    el("h2", {}, [Object.keys(state.vacancies || {}).length ? "Найти позицию" : "Ваша первая вакансия"]),
+    el("p", {}, ["Выбор названия создаёт отдельный черновик. Доступ к чужим вакансиям и кандидатам не предоставляется."]),
+    el("input", { class: "input", type: "search", placeholder: "Название должности", "aria-label": "Поиск позиции", oninput: event => update(event.target.value) }),
+    list
+  ]);
+}
+
 function hiringDashboardView() {
   const canCreateOpening = canStartRecruitment();
+  const hasVacancies = Object.keys(state.vacancies || {}).length > 0;
   const activeOpenings = activeOpeningItems();
   return el("section", { class: "staff-page" }, [
     el("header", { class: "dash-header" }, [
@@ -4494,7 +4617,8 @@ function hiringDashboardView() {
         el("p", {}, ["Выберите готовую вакансию из справочника или создайте новую позицию отдельным сценарием ниже."])
       ])
     ]),
-    el("section", { class: "table-panel staff-form" }, [
+    positionCatalogPanel(),
+    hasVacancies ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Заявка по готовой вакансии"]), el("span", {}, ["Выберите позицию из справочника и укажите причину открытия."])]),
       el("div", { class: "staff-form-grid" }, [
         hiringVacancyField(),
@@ -4505,10 +4629,10 @@ function hiringDashboardView() {
       el("div", { class: "admin-form-actions" }, [
         el("button", { class: "btn primary", onclick: createHiringRequestFromAdmin }, ["Создать заявку"])
       ])
-    ]),
+    ]) : el("div"),
     canCreateOpening ? vacancyWizardPanel() : el("div"),
     canCreateOpening ? createdVacancyReviewPanel() : el("div"),
-    canCreateOpening ? el("section", { class: "table-panel staff-form" }, [
+    canCreateOpening && hasVacancies ? el("section", { class: "table-panel staff-form" }, [
       el("div", { class: "panel-head" }, [el("h2", {}, ["Начать подбор по готовой вакансии"]), el("span", {}, ["Создает рабочую воронку по выбранной позиции."])]),
       el("div", { class: "staff-form-grid" }, [
         openingVacancyField(),
@@ -4957,7 +5081,9 @@ function adminView() {
   const testConversion = pctText(testKpis.submitted, analytics.total || 0);
   const selected = state.selected;
   const currentVacancyTitle = vacancyLabel(state.adminVacancyCode);
-  const mainContent = state.adminSection === "overview"
+  const mainContent = state.user.role === "hiring_manager" && !Object.keys(state.vacancies || {}).length
+    ? hiringDashboardView()
+    : state.adminSection === "overview"
     ? adminOverviewView()
     : state.adminSection === "staff" && isOwner()
     ? staffManagementView()
@@ -5806,7 +5932,8 @@ function render() {
       ? testAssignmentView()
     : route === "privacy" || route === "personal-data-consent"
       ? legalPage(route)
-      : candidateView();
+      : route === "vacancy-catalog" ? vacancyCatalogView()
+      : route === "vacancy-description" ? vacancyDescriptionView() : candidateView();
   app.replaceChildren(view);
   if (state.loading) document.body.append(el("div", { class: "loading" }, ["Загрузка..."]));
   else document.querySelectorAll(".loading").forEach(node => node.remove());

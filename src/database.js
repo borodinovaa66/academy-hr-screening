@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { defaultConfig } = require("./defaultConfig");
 
-const dataDir = path.join(__dirname, "..", "data");
+const dataDir = process.env.HR_DATA_DIR || path.join(__dirname, "..", "data");
 const sqlitePath = path.join(dataDir, "hr-screening.sqlite");
 
 let db;
