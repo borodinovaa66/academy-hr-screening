@@ -265,6 +265,8 @@
 
 2026-10-21 18:30 GST Андрей попросил повторно проверить Yandex Cloud и выполнить запрос Антона. Официальный статус ru Compute Cloud остаётся `Unavailable`; диск — `READY`, VM — `STOPPED`, аварийного снимка нет, создание снимка отклонено как `FailedPrecondition: this type of operation is currently unavailable`. В чате Антона новых сообщений после 2026-10-20 19:43 GST нет. Свежая сверка GitHub подтвердила: `origin/main` и `origin/codex/funnel-lifecycle-foundation` указывают на один коммит `7f15bb677f4d60cb77fd31c6797cd6ca66098d28`. Архив `/opt/hr-screening/data` нельзя безопасно подготовить до READY snapshot и восстановления SSH. VM не запускалась, production-данные и HeadHunter не изменялись.
 
+2026-10-21 18:50 GST официальный статус `ru Compute Cloud` остаётся `Unavailable`. Диск — `READY`, VM — `STOPPED`, snapshot отсутствует; повторная попытка создать snapshot завершилась `FailedPrecondition: this type of operation is currently unavailable`. Новых ответов поддержки по `DS812710177` и новых сообщений Антона нет. В Москве 17:50; сообщение Антону не отправлено без подтверждения в момент отправки. VM не запускалась, production-данные и HeadHunter не изменялись.
+
 До восстановления доступа к диску безопасны только:
 
 1. обращение в поддержку Yandex Cloud с просьбой подтвердить сохранность диска и доступный сценарий восстановления/копирования из `ru-central1-a`;
