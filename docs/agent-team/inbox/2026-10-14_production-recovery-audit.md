@@ -271,6 +271,8 @@
 
 2026-10-21 19:50 GST официальный статус `ru Compute Cloud` остаётся `Unavailable`. Чтение Compute API доступно: диск `fhmas11go9nhjf6pud3v` — `READY` в `ru-central1-a`, VM `my-cloud-server` — `STOPPED`, snapshot отсутствует. Повторная попытка создать snapshot завершилась `FailedPrecondition: this type of operation is currently unavailable`. Новых ответов поддержки по `DS812710177` и новых сообщений Антона нет. В Москве 18:50, поэтому исходящие сообщения в Bitrix24 не отправлялись. VM не запускалась, production-данные и HeadHunter не изменялись.
 
+2026-10-21 20:20 GST официальный статус `ru Compute Cloud` остаётся `Unavailable`. Чтение Compute API доступно: диск `fhmas11go9nhjf6pud3v` — `READY` в `ru-central1-a`, VM `my-cloud-server` — `STOPPED`, snapshot отсутствует. Повторная попытка создать snapshot завершилась `FailedPrecondition: this type of operation is currently unavailable`. Новых ответов поддержки по `DS812710177` и новых сообщений Антона нет. В Москве 19:20, поэтому исходящие сообщения в Bitrix24 не отправлялись. VM не запускалась, production-данные и HeadHunter не изменялись.
+
 До восстановления доступа к диску безопасны только:
 
 1. обращение в поддержку Yandex Cloud с просьбой подтвердить сохранность диска и доступный сценарий восстановления/копирования из `ru-central1-a`;
