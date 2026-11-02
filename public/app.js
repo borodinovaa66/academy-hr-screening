@@ -5722,7 +5722,6 @@ function siteFooter() {
       el("span", {}, [`Оператор персональных данных: ${OPERATOR.legalName}`]),
       el("span", {}, [`ИНН ${OPERATOR.inn}`]),
       el("span", {}, [`ОГРНИП ${OPERATOR.ogrnip}`]),
-      el("span", {}, [`Адрес: ${OPERATOR.address}`]),
       el("span", {}, ["Электронная почта для обращений по персональным данным: ", el("a", { href: `mailto:${OPERATOR.email}` }, [OPERATOR.email])])
     ]),
     el("nav", { class: "footer-links" }, [
